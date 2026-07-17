@@ -111,29 +111,31 @@ public class Worker(
         string remoteString = "unknown";
         string response = string.Empty;
 
+        bool isIgnoredTelemetrySource = false;
+
         using (client)
         {
-            client.NoDelay = true;
             EndPoint? remote = null;
-
-            var remoteAddress = (remote as IPEndPoint)?
-                .Address
-                .MapToIPv4()
-                .ToString();
-
-            bool isIgnoredTelemetrySource =
-                !string.IsNullOrWhiteSpace(
-                    options.Value.TelemetryIgnoredRemoteAddress) &&
-                string.Equals(
-                    remoteAddress,
-                    options.Value.TelemetryIgnoredRemoteAddress,
-                    StringComparison.OrdinalIgnoreCase);
 
             try
             {
                 client.NoDelay = true;
                 remote = client.Client.RemoteEndPoint;
+
                 remoteString = remote?.ToString() ?? "unknown";
+
+                string? remoteAddress = (remote as IPEndPoint)?
+                    .Address
+                    .MapToIPv4()
+                    .ToString();
+
+                isIgnoredTelemetrySource =
+                    !string.IsNullOrWhiteSpace(
+                        options.Value.TelemetryIgnoredRemoteAddress) &&
+                    string.Equals(
+                        remoteAddress,
+                        options.Value.TelemetryIgnoredRemoteAddress,
+                        StringComparison.OrdinalIgnoreCase);
 
                 using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 timeoutCts.CancelAfter(options.Value.RequestTimeoutSeconds);
@@ -145,7 +147,7 @@ public class Worker(
 
                 await using NetworkStream stream = client.GetStream();
                 await stream.WriteAsync(responseBytes, connectionToken);
-                await stream.FlushAsync(stoppingToken);
+                await stream.FlushAsync(connectionToken);
 
                 succeeded = true;
                 outcome = "success";
