@@ -6,7 +6,7 @@
 
 namespace HappyDaytime;
 
-public sealed class HappyEchoOptions
+public sealed class HappyDaytimeOptions
 {
     public const string SectionName = "Daytime";
     public string ListenAddress { get; init; } = "127.0.0.1";
