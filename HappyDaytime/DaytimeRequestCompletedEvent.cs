@@ -1,8 +1,6 @@
 namespace HappyDaytime;
 
-public sealed record FingerRequestCompletedEvent(
-    bool RequestReceived,
-    int RequestLength,
+public sealed record DaytimeRequestCompletedEvent(
     string Remote,
     string Response,
     long DurationMilliseconds,
