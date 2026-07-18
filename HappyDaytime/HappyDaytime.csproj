@@ -5,6 +5,15 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-HappyDaytime-5baf4400-3927-4222-9371-b95e296a3320</UserSecretsId>
+	  <!-- Enable Native AOT Compilation -->
+	  <PublishAot>true</PublishAot>
+
+	  <!-- Strip out all unused framework code ruthlessly -->
+	  <TrimMode>full</TrimMode>
+
+	  <!-- Optimizes for size, cutting out unneeded native metadata -->
+	  <OptimizationPreference>Size</OptimizationPreference>
+	  <EnableConfigurationBindingSourceGenerator>true</EnableConfigurationBindingSourceGenerator>
   </PropertyGroup>
 
   <ItemGroup>

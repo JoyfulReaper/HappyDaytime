@@ -1,21 +1,30 @@
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
-
+FROM mcr.microsoft.com/dotnet/sdk:10.0-alpine AS build
 WORKDIR /src
 
 COPY . .
 
-RUN dotnet restore \
-    HappyDaytime/HappyDaytime.csproj
+RUN apk add --no-cache \
+    clang \
+    build-base \
+    zlib-dev
 
-RUN dotnet publish \
-    HappyDaytime/HappyDaytime.csproj \
+COPY . .
+
+RUN dotnet restore HappyDaytime.slnx
+
+RUN dotnet test HappyDaytime.slnx \
     --configuration Release \
-    --output /app/publish \
+    --no-restore
+
+RUN dotnet publish HappyDaytime/HappyDaytime.csproj \
+    --configuration Release \
+    --runtime linux-musl-x64 \
+    --self-contained true \
+    /p:PublishAot=true \
     --no-restore \
-    /p:UseAppHost=false
+    --output /app/publish
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0 AS final
-
+FROM mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine AS final
 WORKDIR /app
 
 COPY --from=build /app/publish .
@@ -28,4 +37,4 @@ ENV HappyDaytime__ListenAddress=0.0.0.0
 ENV HappyDaytime__Port=1313
 ENV HappyDaytime__MaxConcurrentConnections=100
 
-ENTRYPOINT ["dotnet", "HappyDaytime.dll"]
+ENTRYPOINT ["./HappyDaytime"]

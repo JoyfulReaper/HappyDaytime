@@ -232,8 +232,6 @@ public class Worker(
             }
             catch (Exception exception)
             {
-                // IMissionControlClient is supposed to be best-effort, but this
-                // protects HappyDaytime from custom or test implementations that throw.
                 logger.LogWarning(
                     exception,
                     "Failed to publish Mission Control event for connection {ConnectionId}.",
