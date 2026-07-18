@@ -4,11 +4,14 @@
  * Licensed under the MIT License.
  */
 
-namespace HappyDaytime;
+namespace HappyDaytime.Events;
 
 public sealed record DaytimeRequestCompletedEvent(
     string Remote,
     string Response,
     long DurationMilliseconds,
     string Outcome,
-    bool Succeeded);
+    bool Succeeded)
+{
+    public const string EventName = "happydaytime.request.completed";
+}

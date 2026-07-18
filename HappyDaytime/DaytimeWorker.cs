@@ -4,6 +4,7 @@
  * Licensed under the MIT License.
  */
 
+using HappyDaytime.Events;
 using JoyfulReaperLib.JRNet;
 using JoyfulReaperLib.MissionControl;
 using Microsoft.Extensions.Options;
@@ -39,6 +40,25 @@ public class Worker(
         _listener.Start();
 
         logger.LogInformation("HappyDaytime server started on {IPAddress}:{Port}", _localBoundAddress, options.Value.Port);
+
+        var occurredAt = DateTimeOffset.UtcNow;
+
+        try
+        {
+            await missionControlClient.TryPublishAsync(
+                eventType: DaytimeServiceStartedEvent.EventName,
+                payload: new DaytimeServiceStartedEvent(
+                    $"{_localBoundAddress} {options.Value.Port}"),
+                occurredAt: occurredAt,
+                correlationId: null,
+                cancellationToken: stoppingToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Failed to publish Mission Control event for Daytime Service Started");
+        }
 
         try
         {
@@ -219,7 +239,7 @@ public class Worker(
             try
             {
                 await missionControlClient.TryPublishAsync(
-                    eventType: "happydaytime.request.completed",
+                    eventType: DaytimeRequestCompletedEvent.EventName,
                     payload: new DaytimeRequestCompletedEvent(
                         Remote: remoteString,
                         Response: response,
