@@ -48,7 +48,7 @@ public class Worker(
             bool published = await missionControlClient.TryPublishAsync(
                 eventType: DaytimeServiceStartedEvent.EventName,
                 payload: new DaytimeServiceStartedEvent(
-                    $"{_localBoundAddress} {options.Value.Port}"),
+                    $"{_localBoundAddress}:{options.Value.Port}"),
                 payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeServiceStartedEvent,
                 occurredAt: occurredAt,
                 correlationId: null,
