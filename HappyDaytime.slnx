@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="HappyDaytime/HappyDaytime.csproj" />
+  <Project Path="HappyDaytime.Tests/HappyDaytime.Tests.csproj" />
 </Solution>

@@ -45,13 +45,21 @@ public class Worker(
 
         try
         {
-            await missionControlClient.TryPublishAsync(
+            bool published = await missionControlClient.TryPublishAsync(
                 eventType: DaytimeServiceStartedEvent.EventName,
                 payload: new DaytimeServiceStartedEvent(
                     $"{_localBoundAddress} {options.Value.Port}"),
+                payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeServiceStartedEvent,
                 occurredAt: occurredAt,
                 correlationId: null,
                 cancellationToken: stoppingToken);
+
+            if (!published)
+            {
+                logger.LogWarning(
+                    "Mission Control did not accept {EventType}",
+                    DaytimeServiceStartedEvent.EventName);
+            }
         }
         catch (Exception exception)
         {
@@ -246,6 +254,7 @@ public class Worker(
                         DurationMilliseconds: stopwatch.ElapsedMilliseconds,
                         Outcome: outcome,
                         Succeeded: succeeded),
+                    payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeRequestCompletedEvent,
                     occurredAt: occurredAt,
                     correlationId: correlationId,
                     cancellationToken: stoppingToken);
@@ -258,5 +267,14 @@ public class Worker(
                     connectionId);
             }
         }
+    }
+
+    public override Task StopAsync(CancellationToken cancellationToken)
+    {
+        logger.LogInformation("HappyEcho Server Stopping...");
+        _stopRequested = true;
+        _listener?.Stop();
+
+        return base.StopAsync(cancellationToken);
     }
 }
