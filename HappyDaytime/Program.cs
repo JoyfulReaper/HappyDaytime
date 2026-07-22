@@ -27,7 +27,7 @@ builder.Services.AddMissionControlClient(
     builder.Configuration.GetSection(
         MissionControlClientOptions.SectionName));
 
-builder.Services.AddHostedService<Worker>();
+builder.Services.AddHostedService<DaytimeWorker>();
 
 var host = builder.Build();
 host.Run();

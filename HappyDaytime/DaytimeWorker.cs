@@ -1,5 +1,5 @@
 /*
- * Happy Daytime Server
+ * Happy Daytime Service
  * Copyright (c) 2026 Kyle Givler
  * Licensed under the MIT License.
  */
@@ -18,8 +18,8 @@ using System.Text;
 
 namespace HappyDaytime;
 
-public class Worker(
-    ILogger<Worker> logger,
+public class DaytimeWorker(
+    ILogger<DaytimeWorker> logger,
     IMissionControlClient missionControlClient,
     IOptions<HappyDaytimeOptions> options) : BackgroundService
 {

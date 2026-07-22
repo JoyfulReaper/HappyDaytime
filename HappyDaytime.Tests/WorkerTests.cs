@@ -262,7 +262,7 @@ public sealed class WorkerTests
             RequestTimeoutSeconds = requestTimeoutSeconds
         };
 
-        TimeSpan timeout = Worker.GetRequestTimeout(options);
+        TimeSpan timeout = DaytimeWorker.GetRequestTimeout(options);
 
         Assert.Equal(requestTimeoutSeconds, timeout.TotalSeconds);
     }
@@ -313,7 +313,7 @@ public sealed class WorkerTests
         listener.Stop();
     }
 
-    private static Worker CreateWorker(
+    private static DaytimeWorker CreateWorker(
         int port,
         RecordingMissionControlClient client,
         Action<HappyDaytimeOptions>? configure = null)
@@ -328,8 +328,8 @@ public sealed class WorkerTests
 
         configure?.Invoke(options);
 
-        return new Worker(
-            LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.None)).CreateLogger<Worker>(),
+        return new DaytimeWorker(
+            LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.None)).CreateLogger<DaytimeWorker>(),
             client,
             Options.Create(options));
     }
