@@ -8,8 +8,6 @@ RUN apk add --no-cache \
     build-base \
     zlib-dev
 
-COPY . .
-
 RUN dotnet restore HappyDaytime.slnx
 
 RUN dotnet test HappyDaytime.slnx \
@@ -33,8 +31,10 @@ COPY --from=build /app/publish .
 # usually requires root or extra Linux capabilities.
 EXPOSE 1313
 
-ENV HappyDaytime__ListenAddress=0.0.0.0
-ENV HappyDaytime__Port=1313
-ENV HappyDaytime__MaxConcurrentConnections=100
+ENV Daytime__ListenAddress=0.0.0.0
+ENV Daytime__Port=1313
+ENV Daytime__MaxConcurrentConnections=100
+
+USER $APP_UID
 
 ENTRYPOINT ["./HappyDaytime"]

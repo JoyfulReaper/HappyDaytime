@@ -1,5 +1,5 @@
 /*
- * Happy Daytime Server
+ * Happy Daytime Service
  * Copyright (c) 2026 Kyle Givler
  * Licensed under the MIT License.
  */
@@ -18,8 +18,8 @@ using System.Text;
 
 namespace HappyDaytime;
 
-public class Worker(
-    ILogger<Worker> logger,
+public class DaytimeWorker(
+    ILogger<DaytimeWorker> logger,
     IMissionControlClient missionControlClient,
     IOptions<HappyDaytimeOptions> options) : BackgroundService
 {
@@ -202,7 +202,7 @@ public class Worker(
                     StringComparison.OrdinalIgnoreCase);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
+            timeoutCts.CancelAfter(GetRequestTimeout(options.Value));
 
             CancellationToken connectionToken = timeoutCts.Token;
 
@@ -366,6 +366,10 @@ public class Worker(
 
         return base.StopAsync(cancellationToken);
     }
+
+    internal static TimeSpan GetRequestTimeout(
+        HappyDaytimeOptions options) =>
+        TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
 }
 
 internal sealed record DaytimeConnectionResult(

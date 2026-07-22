@@ -1,35 +1,36 @@
 # Happy Daytime
 
-Happy Daytime is a lightweight TCP daytime server built with .NET 10. When a
-client connects, the server returns the current UTC time as an ISO 8601 value
-and closes the connection.
+Happy Daytime is a lightweight TCP Daytime server built with .NET 10 and
+published as a Native AOT executable.
+
+When a client connects, the server writes exactly one UTC timestamp line and
+closes the TCP connection:
 
 ```text
 2026-07-17T21:30:45.1234567+00:00
 ```
 
-The service follows the simple request-free model of the
-[Daytime Protocol (RFC 867)](https://www.rfc-editor.org/rfc/rfc867), while using
-a machine-friendly timestamp format.
+Happy Daytime supports the TCP side of
+[RFC 867](https://www.rfc-editor.org/rfc/rfc867). RFC 867 also defines UDP, but
+Happy Daytime intentionally does not implement UDP.
 
 ## Features
 
-- Listens on a configurable address and TCP port
-- Limits the number of concurrent connections
-- Applies a timeout to each request
-- Shuts down gracefully while active connections finish
-- Runs as a console application, Windows Service, or Docker container
-- Publishes best-effort request telemetry through JoyfulReaper Mission Control
-- Can exclude a health-check address from telemetry
+- TCP-only RFC 867 daytime responses
+- Configurable listen address, port, timeout, and connection limit
+- One ISO 8601 / round-trip UTC timestamp line per connection
+- Graceful shutdown while active connections finish
+- Best-effort Mission Control startup and request telemetry
+- Native AOT publishing with full trimming and size optimization
+- Self-contained Alpine native executable in a small `runtime-deps` final image
+- Non-root container process
 
 ## Requirements
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), or
 - [Docker](https://docs.docker.com/get-docker/)
 
-## Run locally
-
-Clone the repository and start the worker:
+## Run Locally
 
 ```powershell
 git clone https://github.com/JoyfulReaper/HappyDaytime.git
@@ -38,46 +39,62 @@ $env:Daytime__Port = "1313"
 dotnet run --project .\HappyDaytime\HappyDaytime.csproj
 ```
 
-Port 13 is the protocol's assigned port, but ports below 1024 commonly require
-elevated privileges on Linux and macOS. The example uses port 1313 to avoid
-that requirement.
-
-Connect with a TCP client such as Netcat:
+Connect with a TCP client:
 
 ```bash
 nc 127.0.0.1 1313
 ```
 
-The server immediately writes the current UTC timestamp and closes the
-connection; the client does not need to send a request.
+The client does not need to send data. The server writes one timestamp line,
+flushes it, and closes the connection.
 
-## Run with Docker
+## Docker
 
-Build and run the image from the repository root:
+Build and run on the unprivileged internal container port:
 
 ```bash
 docker build -t happy-daytime .
-docker run --rm -p 1313:1313 -e Daytime__Port=1313 happy-daytime
+docker run --rm -p 1313:1313 happy-daytime
 ```
 
-Then connect to `localhost:1313` with any TCP client.
+Publish the canonical public Daytime port while keeping the container process
+non-root:
+
+```bash
+docker run --rm -p 13:1313 happy-daytime
+```
+
+Binding host port 13 may require root or appropriate host-level privileges on
+Linux and macOS. The container process itself still runs as a non-root user and
+does not need added Linux capabilities.
+
+The Docker image defaults to:
+
+```dockerfile
+ENV Daytime__ListenAddress=0.0.0.0
+ENV Daytime__Port=1313
+ENV Daytime__MaxConcurrentConnections=100
+```
+
+The final image uses `mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine`. It
+contains the Native AOT executable and native runtime dependencies only; it does
+not contain the full managed .NET runtime.
 
 ## Configuration
 
 Settings live in the `Daytime` section of
-[`appsettings.json`](HappyDaytime/appsettings.json). They can also be supplied
-through standard .NET configuration providers. In environment variables, use
-two underscores (`__`) to represent a section separator.
+[`appsettings.json`](HappyDaytime/appsettings.json). Environment variables use
+two underscores (`__`) as section separators.
 
 | Setting | Environment variable | Default | Description |
 | --- | --- | ---: | --- |
-| `ListenAddress` | `Daytime__ListenAddress` | `0.0.0.0` | IP address on which the server listens |
-| `Port` | `Daytime__Port` | `13` | TCP listening port (1-65535) |
-| `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum number of connections handled at once |
-| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing a response |
-| `TelemetryIgnoredRemoteAddress` | `Daytime__TelemetryIgnoredRemoteAddress` | `null` | Client IP address excluded from telemetry, useful for health checks |
+| `ListenAddress` | `Daytime__ListenAddress` | `127.0.0.1` | IP address on which the TCP listener binds |
+| `Port` | `Daytime__Port` | `13` | TCP listening port |
+| `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum concurrent accepted connections |
+| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing and flushing one response |
+| `TelemetryIgnoredRemoteAddress` | `Daytime__TelemetryIgnoredRemoteAddress` | `null` | Client IP excluded from request telemetry |
 
-For example:
+Example:
 
 ```bash
 Daytime__ListenAddress=127.0.0.1 \
@@ -89,24 +106,36 @@ dotnet run --project HappyDaytime/HappyDaytime.csproj
 Invalid port, connection-limit, or timeout values are rejected when the
 application starts.
 
-## Build and publish
+## Build And Publish
 
 ```bash
 dotnet restore HappyDaytime.slnx
 dotnet build HappyDaytime.slnx --configuration Release --no-restore
-dotnet publish HappyDaytime/HappyDaytime.csproj --configuration Release
+dotnet test HappyDaytime.slnx --configuration Release --no-build
+dotnet publish HappyDaytime/HappyDaytime.csproj \
+  --configuration Release \
+  --runtime linux-musl-x64 \
+  --self-contained true \
+  /p:PublishAot=true \
+  --no-restore
 ```
 
-The application includes Windows Service integration. A published executable
-can be registered with the Windows Service Control Manager and runs under the
-service name **Happy Daytime Server**.
+Native AOT, full trimming, and size optimization are enabled in the project.
 
 ## Telemetry
 
-After a connection completes, Happy Daytime attempts to publish a
-`happydaytime.request.completed` event. The event includes the remote endpoint,
-response, duration, outcome, and success state. Telemetry is best-effort: a
-publishing failure is logged but does not interrupt the daytime service.
+Happy Daytime publishes best-effort Mission Control telemetry:
+
+- `happydaytime.service.started`
+- `happydaytime.request.completed`
+
+Startup telemetry and request telemetry each use an independent two-second
+bounded timeout. If Mission Control is unavailable, returns `false`, times out,
+or throws, the server logs the condition and keeps serving.
+
+For request telemetry, the response is written and flushed first. Then the
+stream and `TcpClient` are disposed, the connection semaphore slot is released,
+and only afterward is request telemetry awaited with its bounded timeout.
 
 ## License
 
