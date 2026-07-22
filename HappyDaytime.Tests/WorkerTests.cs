@@ -32,7 +32,7 @@ public sealed class WorkerTests
             Assert.Equal(typeof(DaytimeServiceStartedEvent), publish.PayloadDeclaredType);
 
             var payload = Assert.IsType<DaytimeServiceStartedEvent>(publish.Payload);
-            Assert.Equal($"127.0.0.1 {port}", payload.ListenAddress);
+            Assert.Equal($"127.0.0.1:{port}", payload.ListenAddress);
             Assert.Null(publish.CorrelationId);
             Assert.Equal(DateTimeOffset.UtcNow.Date, publish.OccurredAt.Date);
         }
@@ -117,6 +117,149 @@ public sealed class WorkerTests
         {
             await worker.StopAsync(CancellationToken.None);
         }
+    }
+
+    [Fact]
+    public async Task Closes_Client_Before_Request_Telemetry_Completes()
+    {
+        var client = new RecordingMissionControlClient
+        {
+            BlockRequestTelemetry = true
+        };
+        int port = GetFreeTcpPort();
+        using var worker = CreateWorker(port, client);
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
+
+            string response = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+
+            await client.RequestTelemetryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEmpty(response);
+            Assert.Single(client.BlockedRequestTelemetry);
+            Assert.DoesNotContain(
+                client.SuccessfulCalls,
+                call => call.EventType == DaytimeRequestCompletedEvent.EventName);
+        }
+        finally
+        {
+            client.ReleaseAllBlockedRequestTelemetry();
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Releases_Connection_Slot_Before_Request_Telemetry_Completes()
+    {
+        var client = new RecordingMissionControlClient
+        {
+            BlockRequestTelemetry = true
+        };
+        int port = GetFreeTcpPort();
+        using var worker = CreateWorker(port, client, options =>
+        {
+            options.MaxConcurrentConnections = 1;
+        });
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
+
+            string firstResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForAsync(() => client.BlockedRequestTelemetry.Count == 1);
+
+            string secondResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForAsync(() => client.BlockedRequestTelemetry.Count == 2);
+
+            Assert.NotEmpty(firstResponse);
+            Assert.NotEmpty(secondResponse);
+        }
+        finally
+        {
+            client.ReleaseAllBlockedRequestTelemetry();
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Cancels_Request_Telemetry_With_Bounded_Timeout()
+    {
+        var client = new RecordingMissionControlClient
+        {
+            CancelRequestTelemetry = true
+        };
+        int port = GetFreeTcpPort();
+        using var worker = CreateWorker(port, client);
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
+
+            string response = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+
+            await client.RequestTelemetryCancelled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEmpty(response);
+            Assert.Single(
+                client.Attempts,
+                call => call.EventType == DaytimeRequestCompletedEvent.EventName);
+            Assert.DoesNotContain(
+                client.SuccessfulCalls,
+                call => call.EventType == DaytimeRequestCompletedEvent.EventName);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public async Task Keeps_Serving_When_Request_Telemetry_Throws()
+    {
+        var client = new RecordingMissionControlClient
+        {
+            ThrowOnRequestTelemetry = true
+        };
+        int port = GetFreeTcpPort();
+        using var worker = CreateWorker(port, client, options =>
+        {
+            options.MaxConcurrentConnections = 1;
+        });
+
+        try
+        {
+            await worker.StartAsync(CancellationToken.None);
+            await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
+
+            string firstResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+            string secondResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+
+            Assert.NotEmpty(firstResponse);
+            Assert.NotEmpty(secondResponse);
+            Assert.Equal(3, client.Attempts.Count);
+            Assert.Single(client.SuccessfulCalls);
+        }
+        finally
+        {
+            await worker.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public void Request_Timeout_Uses_Seconds_Not_Milliseconds()
+    {
+        string workerSource = File.ReadAllText(
+            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "HappyDaytime", "DaytimeWorker.cs"));
+
+        Assert.Contains(
+            "timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));",
+            workerSource,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -248,6 +391,20 @@ public sealed class WorkerTests
 
         public ConcurrentQueue<PublishCall> SuccessfulCalls { get; } = new();
 
+        public ConcurrentQueue<BlockedRequestTelemetry> BlockedRequestTelemetry { get; } = new();
+
+        public TaskCompletionSource RequestTelemetryStarted { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource RequestTelemetryCancelled { get; } = new(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public bool BlockRequestTelemetry { get; init; }
+
+        public bool CancelRequestTelemetry { get; init; }
+
+        public bool ThrowOnRequestTelemetry { get; init; }
+
         public int ThrowOnAttemptNumber { get; init; }
 
         public Task<bool> TryPublishAsync<TPayload>(
@@ -270,6 +427,26 @@ public sealed class WorkerTests
 
             Attempts.Enqueue(call);
 
+            if (eventType == DaytimeRequestCompletedEvent.EventName)
+            {
+                RequestTelemetryStarted.TrySetResult();
+
+                if (ThrowOnRequestTelemetry)
+                {
+                    throw new InvalidOperationException("Planned request telemetry failure.");
+                }
+
+                if (CancelRequestTelemetry)
+                {
+                    return WaitForCancellationAsync(cancellationToken);
+                }
+
+                if (BlockRequestTelemetry)
+                {
+                    return BlockRequestTelemetryAsync(call);
+                }
+            }
+
             if (attemptNumber == ThrowOnAttemptNumber)
             {
                 throw new InvalidOperationException($"Planned publish failure for attempt {attemptNumber}.");
@@ -277,6 +454,41 @@ public sealed class WorkerTests
 
             SuccessfulCalls.Enqueue(call);
             return Task.FromResult(true);
+        }
+
+        public void ReleaseAllBlockedRequestTelemetry()
+        {
+            foreach (var blocked in BlockedRequestTelemetry)
+            {
+                blocked.Release.TrySetResult();
+            }
+        }
+
+        private async Task<bool> WaitForCancellationAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                RequestTelemetryCancelled.TrySetResult();
+                throw;
+            }
+        }
+
+        private async Task<bool> BlockRequestTelemetryAsync(PublishCall call)
+        {
+            var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var blocked = new BlockedRequestTelemetry(call, release);
+
+            BlockedRequestTelemetry.Enqueue(blocked);
+
+            await release.Task;
+
+            SuccessfulCalls.Enqueue(call);
+            return true;
         }
     }
 
@@ -288,4 +500,8 @@ public sealed class WorkerTests
         Type PayloadDeclaredType,
         DateTimeOffset OccurredAt,
         string? CorrelationId);
+
+    private sealed record BlockedRequestTelemetry(
+        PublishCall Call,
+        TaskCompletionSource Release);
 }
