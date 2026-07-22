@@ -46,7 +46,7 @@ public class DaytimeWorker(
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            timeout.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
 
             bool published = await missionControlClient.TryPublishAsync(
                 eventType: DaytimeServiceStartedEvent.EventName,
