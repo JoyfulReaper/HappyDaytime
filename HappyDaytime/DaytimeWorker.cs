@@ -46,7 +46,7 @@ public class DaytimeWorker(
         try
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+            timeout.CancelAfter(TimeSpan.FromSeconds(2)); // TODO: Make configurable
 
             bool published = await missionControlClient.TryPublishAsync(
                 eventType: DaytimeServiceStartedEvent.EventName,
@@ -185,7 +185,6 @@ public class DaytimeWorker(
         try
         {
             remote = client.Client.RemoteEndPoint;
-
             remoteString = remote?.ToString() ?? "unknown";
 
             string? remoteAddress = (remote as IPEndPoint)?
@@ -360,7 +359,7 @@ public class DaytimeWorker(
 
     public override Task StopAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("HappyDaytime Server Stopping...");
+        logger.LogInformation("HappyDaytime Service Stopping...");
         _stopRequested = true;
         _listener?.Stop();
 
