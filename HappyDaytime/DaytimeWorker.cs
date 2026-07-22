@@ -45,6 +45,9 @@ public class Worker(
 
         try
         {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(2));
+
             bool published = await missionControlClient.TryPublishAsync(
                 eventType: DaytimeServiceStartedEvent.EventName,
                 payload: new DaytimeServiceStartedEvent(
@@ -52,7 +55,7 @@ public class Worker(
                 payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeServiceStartedEvent,
                 occurredAt: occurredAt,
                 correlationId: null,
-                cancellationToken: stoppingToken);
+                cancellationToken: timeout.Token);
 
             if (!published)
             {
@@ -60,6 +63,16 @@ public class Worker(
                     "Mission Control did not accept {EventType}",
                     DaytimeServiceStartedEvent.EventName);
             }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            logger.LogDebug(
+                "Mission Control event publication for Daytime Service Started was cancelled during shutdown.");
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning(
+                "Mission Control event publication for Daytime Service Started timed out.");
         }
         catch (Exception exception)
         {
@@ -99,10 +112,9 @@ public class Worker(
                 Task task = HandleClientAsync(connectionId, client, stoppingToken);
                 _activeConnections[connectionId] = task;
 
-                _ = task.ContinueWith(ct =>
+                _ = task.ContinueWith(completedTask =>
                 {
                     _activeConnections.TryRemove(connectionId, out _);
-                    _connectionLimit.Release();
                 },
                 CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously,
@@ -129,8 +141,33 @@ public class Worker(
 
     private async Task HandleClientAsync(long connectionId, TcpClient client, CancellationToken stoppingToken)
     {
+        DaytimeConnectionResult? result = null;
+
+        try
+        {
+            using (client)
+            {
+                client.NoDelay = true;
+                result = await HandleConnectionAsync(connectionId, client, stoppingToken);
+            }
+        }
+        finally
+        {
+            _connectionLimit.Release();
+        }
+
+        if (result is not null)
+        {
+            await PublishTelemetryAsync(connectionId, result, stoppingToken);
+        }
+    }
+
+    private async Task<DaytimeConnectionResult> HandleConnectionAsync(
+        long connectionId,
+        TcpClient client,
+        CancellationToken stoppingToken)
+    {
         var occurredAt = DateTimeOffset.UtcNow;
-        var stopwatch = Stopwatch.StartNew();
         var correlationId = Guid.NewGuid().ToString("N");
 
         bool succeeded = false;
@@ -138,143 +175,206 @@ public class Worker(
         string outcome = "failed";
         string remoteString = "unknown";
         string response = string.Empty;
+        long durationMilliseconds = 0;
 
         bool isIgnoredTelemetrySource = false;
 
-        using (client)
+        EndPoint? remote = null;
+        Stopwatch? stopwatch = null;
+
+        try
         {
-            EndPoint? remote = null;
+            remote = client.Client.RemoteEndPoint;
 
-            try
-            {
-                client.NoDelay = true;
-                remote = client.Client.RemoteEndPoint;
+            remoteString = remote?.ToString() ?? "unknown";
 
-                remoteString = remote?.ToString() ?? "unknown";
+            string? remoteAddress = (remote as IPEndPoint)?
+                .Address
+                .MapToIPv4()
+                .ToString();
 
-                string? remoteAddress = (remote as IPEndPoint)?
-                    .Address
-                    .MapToIPv4()
-                    .ToString();
+            isIgnoredTelemetrySource =
+                !string.IsNullOrWhiteSpace(
+                    options.Value.TelemetryIgnoredRemoteAddress) &&
+                string.Equals(
+                    remoteAddress,
+                    options.Value.TelemetryIgnoredRemoteAddress,
+                    StringComparison.OrdinalIgnoreCase);
 
-                isIgnoredTelemetrySource =
-                    !string.IsNullOrWhiteSpace(
-                        options.Value.TelemetryIgnoredRemoteAddress) &&
-                    string.Equals(
-                        remoteAddress,
-                        options.Value.TelemetryIgnoredRemoteAddress,
-                        StringComparison.OrdinalIgnoreCase);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+            timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
 
-                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-                timeoutCts.CancelAfter(options.Value.RequestTimeoutSeconds);
+            CancellationToken connectionToken = timeoutCts.Token;
 
-                CancellationToken connectionToken = timeoutCts.Token;
+            stopwatch = Stopwatch.StartNew();
+            response = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+            byte[] responseBytes = Encoding.ASCII.GetBytes(response + "\r\n");
 
-                response = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-                byte[] responseBytes = Encoding.ASCII.GetBytes(response + "\r\n");
-
-                await using NetworkStream stream = client.GetStream();
-                await stream.WriteAsync(responseBytes, connectionToken);
-                await stream.FlushAsync(connectionToken);
-
-                succeeded = true;
-                outcome = "success";
-            }
-            catch (OperationCanceledException)
-                when (stoppingToken.IsCancellationRequested)
-            {
-                // The application is shutting down. This is not a request
-                // timeout and does not need to produce a telemetry event.
-                shouldPublish = false;
-
-                logger.LogDebug(
-                    "Connection {ConnectionId} from {Remote} was cancelled during shutdown.",
-                    connectionId,
-                    remote);
-            }
-            catch (OperationCanceledException)
-            {
-                outcome = "timeout";
-
-                logger.LogWarning(
-                    "Connection {ConnectionId} from {Remote} timed out.",
-                    connectionId,
-                    remote);
-            }
-            catch (IOException exception)
-            {
-                outcome = "io-error";
-
-                logger.LogDebug(
-                    exception,
-                    "Connection {ConnectionId} from {Remote} ended early.",
-                    connectionId,
-                    remote);
-            }
-            catch (SocketException exception)
-            {
-                outcome = "socket-error";
-
-                logger.LogDebug(
-                    exception,
-                    "Socket error on connection {ConnectionId} from {Remote}.",
-                    connectionId,
-                    remote);
-            }
-            catch (Exception exception)
-            {
-                outcome = "failed";
-
-                logger.LogError(
-                    exception,
-                    "Unhandled error on connection {ConnectionId} from {Remote}.",
-                    connectionId,
-                    remote);
-            }
-
+            await using NetworkStream stream = client.GetStream();
+            await stream.WriteAsync(responseBytes, connectionToken);
+            await stream.FlushAsync(connectionToken);
             stopwatch.Stop();
+            durationMilliseconds = stopwatch.ElapsedMilliseconds;
 
-            if (!shouldPublish || isIgnoredTelemetrySource)
+            succeeded = true;
+            outcome = "success";
+        }
+        catch (OperationCanceledException)
+            when (stoppingToken.IsCancellationRequested)
+        {
+            // The application is shutting down. This is not a request
+            // timeout and does not need to produce a telemetry event.
+            shouldPublish = false;
+
+            logger.LogDebug(
+                "Connection {ConnectionId} from {Remote} was cancelled during shutdown.",
+                connectionId,
+                remote);
+        }
+        catch (OperationCanceledException)
+        {
+            outcome = "timeout";
+
+            logger.LogWarning(
+                "Connection {ConnectionId} from {Remote} timed out.",
+                connectionId,
+                remote);
+        }
+        catch (IOException exception)
+        {
+            outcome = "io-error";
+
+            logger.LogDebug(
+                exception,
+                "Connection {ConnectionId} from {Remote} ended early.",
+                connectionId,
+                remote);
+        }
+        catch (SocketException exception)
+        {
+            outcome = "socket-error";
+
+            logger.LogDebug(
+                exception,
+                "Socket error on connection {ConnectionId} from {Remote}.",
+                connectionId,
+                remote);
+        }
+        catch (Exception exception)
+        {
+            outcome = "failed";
+
+            logger.LogError(
+                exception,
+                "Unhandled error on connection {ConnectionId} from {Remote}.",
+                connectionId,
+                remote);
+        }
+        finally
+        {
+            if (stopwatch is { IsRunning: true })
             {
-                logger.LogDebug(
-                    "Skipping telemetry for health-check connection {ConnectionId} from {Remote}.",
-                    connectionId,
-                    remoteString);
-
-                return;
+                stopwatch.Stop();
+                durationMilliseconds = stopwatch.ElapsedMilliseconds;
             }
+        }
 
-            try
-            {
-                await missionControlClient.TryPublishAsync(
-                    eventType: DaytimeRequestCompletedEvent.EventName,
-                    payload: new DaytimeRequestCompletedEvent(
-                        Remote: remoteString,
-                        Response: response,
-                        DurationMilliseconds: stopwatch.ElapsedMilliseconds,
-                        Outcome: outcome,
-                        Succeeded: succeeded),
-                    payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeRequestCompletedEvent,
-                    occurredAt: occurredAt,
-                    correlationId: correlationId,
-                    cancellationToken: stoppingToken);
-            }
-            catch (Exception exception)
+        return new DaytimeConnectionResult(
+            ShouldPublish: shouldPublish,
+            IsIgnoredTelemetrySource: isIgnoredTelemetrySource,
+            Remote: remoteString,
+            Response: response,
+            DurationMilliseconds: durationMilliseconds,
+            Outcome: outcome,
+            Succeeded: succeeded,
+            OccurredAt: occurredAt,
+            CorrelationId: correlationId);
+    }
+
+    private async Task PublishTelemetryAsync(
+        long connectionId,
+        DaytimeConnectionResult result,
+        CancellationToken stoppingToken)
+    {
+        if (!result.ShouldPublish)
+        {
+            return;
+        }
+
+        if (result.IsIgnoredTelemetrySource)
+        {
+            logger.LogDebug(
+                "Skipping telemetry for health-check connection {ConnectionId} from {Remote}.",
+                connectionId,
+                result.Remote);
+
+            return;
+        }
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2));
+
+        try
+        {
+            bool published = await missionControlClient.TryPublishAsync(
+                eventType: DaytimeRequestCompletedEvent.EventName,
+                payload: new DaytimeRequestCompletedEvent(
+                    Remote: result.Remote,
+                    Response: result.Response,
+                    DurationMilliseconds: result.DurationMilliseconds,
+                    Outcome: result.Outcome,
+                    Succeeded: result.Succeeded),
+                payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeRequestCompletedEvent,
+                occurredAt: result.OccurredAt,
+                correlationId: result.CorrelationId,
+                cancellationToken: timeout.Token);
+
+            if (!published)
             {
                 logger.LogWarning(
-                    exception,
-                    "Failed to publish Mission Control event for connection {ConnectionId}.",
+                    "Mission Control did not accept {EventType} for connection {ConnectionId}.",
+                    DaytimeRequestCompletedEvent.EventName,
                     connectionId);
             }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            logger.LogDebug(
+                "Mission Control event publication for connection {ConnectionId} was cancelled during shutdown.",
+                connectionId);
+        }
+        catch (OperationCanceledException)
+        {
+            logger.LogWarning(
+                "Mission Control event publication for connection {ConnectionId} timed out.",
+                connectionId);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Failed to publish Mission Control event for connection {ConnectionId}.",
+                connectionId);
         }
     }
 
     public override Task StopAsync(CancellationToken cancellationToken)
     {
-        logger.LogInformation("HappyEcho Server Stopping...");
+        logger.LogInformation("HappyDaytime Server Stopping...");
         _stopRequested = true;
         _listener?.Stop();
 
         return base.StopAsync(cancellationToken);
     }
 }
+
+internal sealed record DaytimeConnectionResult(
+    bool ShouldPublish,
+    bool IsIgnoredTelemetrySource,
+    string Remote,
+    string Response,
+    long DurationMilliseconds,
+    string Outcome,
+    bool Succeeded,
+    DateTimeOffset OccurredAt,
+    string CorrelationId);
