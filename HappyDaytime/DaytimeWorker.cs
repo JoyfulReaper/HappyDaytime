@@ -202,7 +202,7 @@ public class Worker(
                     StringComparison.OrdinalIgnoreCase);
 
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-            timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));
+            timeoutCts.CancelAfter(GetRequestTimeout(options.Value));
 
             CancellationToken connectionToken = timeoutCts.Token;
 
@@ -366,6 +366,10 @@ public class Worker(
 
         return base.StopAsync(cancellationToken);
     }
+
+    internal static TimeSpan GetRequestTimeout(
+        HappyDaytimeOptions options) =>
+        TimeSpan.FromSeconds(options.RequestTimeoutSeconds);
 }
 
 internal sealed record DaytimeConnectionResult(

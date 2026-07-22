@@ -250,16 +250,21 @@ public sealed class WorkerTests
         }
     }
 
-    [Fact]
-    public void Request_Timeout_Uses_Seconds_Not_Milliseconds()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(15)]
+    [InlineData(60)]
+    public void Request_Timeout_Uses_Configured_Seconds(
+        int requestTimeoutSeconds)
     {
-        string workerSource = File.ReadAllText(
-            Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "HappyDaytime", "DaytimeWorker.cs"));
+        var options = new HappyDaytimeOptions
+        {
+            RequestTimeoutSeconds = requestTimeoutSeconds
+        };
 
-        Assert.Contains(
-            "timeoutCts.CancelAfter(TimeSpan.FromSeconds(options.Value.RequestTimeoutSeconds));",
-            workerSource,
-            StringComparison.Ordinal);
+        TimeSpan timeout = Worker.GetRequestTimeout(options);
+
+        Assert.Equal(requestTimeoutSeconds, timeout.TotalSeconds);
     }
 
     [Fact]
@@ -347,7 +352,7 @@ public sealed class WorkerTests
     private static async Task<string> SendRequestAsync(int port)
     {
         using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, port);
+        await ConnectAsync(client, port);
 
         await using NetworkStream stream = client.GetStream();
         using var memory = new MemoryStream();
@@ -365,6 +370,25 @@ public sealed class WorkerTests
         }
 
         return Encoding.ASCII.GetString(memory.ToArray());
+    }
+
+    private static async Task ConnectAsync(
+        TcpClient client,
+        int port)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            try
+            {
+                await client.ConnectAsync(IPAddress.Loopback, port);
+                return;
+            }
+            catch (SocketException) when (DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(25);
+            }
+        }
     }
 
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMilliseconds = 5000)
