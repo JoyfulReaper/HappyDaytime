@@ -1,11 +1,12 @@
 /*
- * Happy Daytime Server
+ * Happy Daytime Service
  * Copyright (c) 2026 Kyle Givler
  * Licensed under the MIT License.
  */
 
 using HappyDaytime;
 using JoyfulReaperLib.MissionControl;
+using JoyfulReaperLib.TcpServer;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -27,7 +28,8 @@ builder.Services.AddMissionControlClient(
     builder.Configuration.GetSection(
         MissionControlClientOptions.SectionName));
 
-builder.Services.AddHostedService<DaytimeWorker>();
+builder.Services.AddTcpServer<DaytimeConnectionHandler, HappyDaytimeOptions>();
+builder.Services.AddHostedService<DaytimeLifecycleService>();
 
 var host = builder.Build();
 host.Run();

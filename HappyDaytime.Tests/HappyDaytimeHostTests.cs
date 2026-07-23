@@ -1,7 +1,9 @@
 using HappyDaytime.Events;
 using JoyfulReaperLib.MissionControl;
+using JoyfulReaperLib.TcpServer;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
@@ -12,18 +14,18 @@ using Xunit;
 
 namespace HappyDaytime.Tests;
 
-public sealed class WorkerTests
+public sealed class HappyDaytimeHostTests
 {
     [Fact]
     public async Task Start_Publishes_Service_Started_Telemetry()
     {
         var client = new RecordingMissionControlClient();
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
 
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
@@ -38,7 +40,7 @@ public sealed class WorkerTests
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -47,11 +49,11 @@ public sealed class WorkerTests
     {
         var client = new RecordingMissionControlClient();
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string response = await SendRequestAsync(port);
@@ -81,29 +83,30 @@ public sealed class WorkerTests
             Assert.Equal(lines[0], payload.Response);
             Assert.StartsWith("127.0.0.1:", payload.Remote, StringComparison.Ordinal);
             Assert.Equal(typeof(DaytimeRequestCompletedEvent), request.PayloadDeclaredType);
-            Assert.NotEqual(Guid.Empty.ToString("N"), request.CorrelationId);
+            Assert.NotNull(request.CorrelationId);
+            Assert.Matches("^[0-9a-f]{32}$", request.CorrelationId);
             Assert.True(parsedResponse >= request.OccurredAt.AddSeconds(-1));
             Assert.True(parsedResponse <= DateTimeOffset.UtcNow.AddSeconds(1));
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
     [Fact]
-    public async Task Skips_Request_Telemetry_For_ignored_Remote_Address()
+    public async Task Skips_Request_Telemetry_For_Ignored_Remote_Address()
     {
         var client = new RecordingMissionControlClient();
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client, options =>
+        using IHost host = CreateHost(port, client, options =>
         {
             options.TelemetryIgnoredRemoteAddress = "127.0.0.1";
         });
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string response = await SendRequestAsync(port);
@@ -115,7 +118,7 @@ public sealed class WorkerTests
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -127,11 +130,11 @@ public sealed class WorkerTests
             BlockRequestTelemetry = true
         };
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string response = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
@@ -147,7 +150,7 @@ public sealed class WorkerTests
         finally
         {
             client.ReleaseAllBlockedRequestTelemetry();
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -159,14 +162,14 @@ public sealed class WorkerTests
             BlockRequestTelemetry = true
         };
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client, options =>
+        using IHost host = CreateHost(port, client, options =>
         {
             options.MaxConcurrentConnections = 1;
         });
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string firstResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
@@ -181,7 +184,7 @@ public sealed class WorkerTests
         finally
         {
             client.ReleaseAllBlockedRequestTelemetry();
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -193,11 +196,11 @@ public sealed class WorkerTests
             CancelRequestTelemetry = true
         };
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string response = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
@@ -214,7 +217,7 @@ public sealed class WorkerTests
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -226,14 +229,14 @@ public sealed class WorkerTests
             ThrowOnRequestTelemetry = true
         };
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client, options =>
+        using IHost host = CreateHost(port, client, options =>
         {
             options.MaxConcurrentConnections = 1;
         });
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
             string firstResponse = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
@@ -241,12 +244,12 @@ public sealed class WorkerTests
 
             Assert.NotEmpty(firstResponse);
             Assert.NotEmpty(secondResponse);
-            Assert.Equal(3, client.Attempts.Count);
+            await WaitForAsync(() => client.Attempts.Count == 3);
             Assert.Single(client.SuccessfulCalls);
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -262,7 +265,7 @@ public sealed class WorkerTests
             RequestTimeoutSeconds = requestTimeoutSeconds
         };
 
-        TimeSpan timeout = DaytimeWorker.GetRequestTimeout(options);
+        TimeSpan timeout = DaytimeConnectionHandler.GetRequestTimeout(options);
 
         Assert.Equal(requestTimeoutSeconds, timeout.TotalSeconds);
     }
@@ -275,11 +278,11 @@ public sealed class WorkerTests
             ThrowOnAttemptNumber = 1
         };
         int port = GetFreeTcpPort();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
         try
         {
-            await worker.StartAsync(CancellationToken.None);
+            await host.StartAsync();
 
             string response = await SendRequestAsync(port);
 
@@ -292,7 +295,7 @@ public sealed class WorkerTests
         }
         finally
         {
-            await worker.StopAsync(CancellationToken.None);
+            await StopHostAsync(host);
         }
     }
 
@@ -301,19 +304,19 @@ public sealed class WorkerTests
     {
         int port = GetFreeTcpPort();
         var client = new RecordingMissionControlClient();
-        using var worker = CreateWorker(port, client);
+        using IHost host = CreateHost(port, client);
 
-        await worker.StartAsync(CancellationToken.None);
+        await host.StartAsync();
         await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
-        await worker.StopAsync(CancellationToken.None);
+        await StopHostAsync(host);
 
         using var listener = new TcpListener(IPAddress.Loopback, port);
         listener.Start();
         listener.Stop();
     }
 
-    private static DaytimeWorker CreateWorker(
+    private static IHost CreateHost(
         int port,
         RecordingMissionControlClient client,
         Action<HappyDaytimeOptions>? configure = null)
@@ -328,10 +331,24 @@ public sealed class WorkerTests
 
         configure?.Invoke(options);
 
-        return new DaytimeWorker(
-            LoggerFactory.Create(builder => builder.SetMinimumLevel(LogLevel.None)).CreateLogger<DaytimeWorker>(),
-            client,
-            Options.Create(options));
+        HostApplicationBuilder builder = Host.CreateApplicationBuilder();
+
+        builder.Logging.ClearProviders();
+        builder.Logging.SetMinimumLevel(LogLevel.None);
+
+        builder.Services.AddSingleton<IMissionControlClient>(client);
+        builder.Services.Configure<HappyDaytimeOptions>(configured =>
+        {
+            configured.ListenAddress = options.ListenAddress;
+            configured.Port = options.Port;
+            configured.MaxConcurrentConnections = options.MaxConcurrentConnections;
+            configured.RequestTimeoutSeconds = options.RequestTimeoutSeconds;
+            configured.TelemetryIgnoredRemoteAddress = options.TelemetryIgnoredRemoteAddress;
+        });
+        builder.Services.AddTcpServer<DaytimeConnectionHandler, HappyDaytimeOptions>();
+        builder.Services.AddHostedService<DaytimeLifecycleService>();
+
+        return builder.Build();
     }
 
     private static int GetFreeTcpPort()
@@ -391,6 +408,12 @@ public sealed class WorkerTests
         }
     }
 
+    private static async Task StopHostAsync(IHost host)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await host.StopAsync(timeout.Token);
+    }
+
     private static async Task WaitForAsync(Func<bool> condition, int timeoutMilliseconds = 5000)
     {
         var deadline = DateTimeOffset.UtcNow.AddMilliseconds(timeoutMilliseconds);
@@ -404,7 +427,7 @@ public sealed class WorkerTests
             await Task.Delay(25);
         }
 
-        throw new TimeoutException("Timed out while waiting for the worker to reach the expected state.");
+        throw new TimeoutException("Timed out while waiting for the host to reach the expected state.");
     }
 
     private sealed class RecordingMissionControlClient : IMissionControlClient

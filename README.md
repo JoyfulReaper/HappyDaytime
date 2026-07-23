@@ -45,8 +45,8 @@ Connect with a TCP client:
 nc 127.0.0.1 1313
 ```
 
-The client does not need to send data. The server writes one timestamp line,
-flushes it, and closes the connection.
+The client does not need to send data. The server writes one timestamp line and
+closes the connection.
 
 ## Docker
 
@@ -88,10 +88,10 @@ two underscores (`__`) as section separators.
 
 | Setting | Environment variable | Default | Description |
 | --- | --- | ---: | --- |
-| `ListenAddress` | `Daytime__ListenAddress` | `127.0.0.1` | IP address on which the TCP listener binds |
+| `ListenAddress` | `Daytime__ListenAddress` | `0.0.0.0` | IP address on which the TCP listener binds |
 | `Port` | `Daytime__Port` | `13` | TCP listening port |
 | `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum concurrent accepted connections |
-| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing and flushing one response |
+| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing one response |
 | `TelemetryIgnoredRemoteAddress` | `Daytime__TelemetryIgnoredRemoteAddress` | `null` | Client IP excluded from request telemetry |
 
 Example:
@@ -133,9 +133,10 @@ Startup telemetry and request telemetry each use an independent two-second
 bounded timeout. If Mission Control is unavailable, returns `false`, times out,
 or throws, the server logs the condition and keeps serving.
 
-For request telemetry, the response is written and flushed first. Then the
-stream and `TcpClient` are disposed, the connection semaphore slot is released,
-and only afterward is request telemetry awaited with its bounded timeout.
+For request telemetry, the response is written and the client connection is
+closed before telemetry publication begins. The connection slot is also
+released first, so slow telemetry does not delay clients or consume the
+configured connection limit.
 
 ## License
 
