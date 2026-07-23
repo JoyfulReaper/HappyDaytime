@@ -64,7 +64,6 @@ public sealed class DaytimeConnectionHandler(
             byte[] responseBytes = Encoding.ASCII.GetBytes(response + "\r\n");
 
             await context.Stream.WriteAsync(responseBytes, timeout.Token);
-            await context.Stream.FlushAsync(timeout.Token);
 
             stopwatch?.Stop();
             durationMilliseconds = stopwatch?.ElapsedMilliseconds ?? 0;
