@@ -18,7 +18,7 @@ using System.Text;
 namespace HappyDaytime;
 
 public sealed class DaytimeConnectionHandler(
-    ILogger<DaytimeWorker> logger,
+    ILogger<DaytimeConnectionHandler> logger,
     IMissionControlClient missionControlClient,
     IOptions<HappyDaytimeOptions> options) : ITcpConnectionHandler
 
@@ -40,10 +40,10 @@ public sealed class DaytimeConnectionHandler(
         CancellationToken cancellationToken)
     {
         DateTimeOffset occurredAt = DateTimeOffset.UtcNow;
-        string correlationId = Guid.NewGuid().ToString();
+        string correlationId = Guid.NewGuid().ToString("N");
 
         bool succeeded = false;
-        bool shouldPublish = false;
+        bool shouldPublish = true;
         string outcome = "failed";
         string response = string.Empty;
         long durationMilliseconds = 0;

@@ -6,6 +6,7 @@
 
 using HappyDaytime;
 using JoyfulReaperLib.MissionControl;
+using JoyfulReaperLib.TcpServer;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -27,7 +28,8 @@ builder.Services.AddMissionControlClient(
     builder.Configuration.GetSection(
         MissionControlClientOptions.SectionName));
 
-builder.Services.AddHostedService<DaytimeWorker>();
+builder.Services.AddTcpServer<DaytimeConnectionHandler, HappyDaytimeOptions>();
+builder.Services.AddHostedService<DaytimeLifecycleService>();
 
 var host = builder.Build();
 host.Run();
