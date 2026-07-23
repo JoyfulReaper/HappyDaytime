@@ -20,12 +20,12 @@ public sealed class DaytimeLifecycleService(
     IOptions<HappyDaytimeOptions> options) : IHostedLifecycleService
 {
     /// <inheritdoc />
-    public Task StartingAsync(
-        CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartingAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 
     /// <inheritdoc />
-    public Task StartAsync(
-        CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StartAsync(CancellationToken cancellationToken) =>
+        Task.CompletedTask;
 
     /// <inheritdoc />
     public async Task StartedAsync(CancellationToken cancellationToken)
@@ -38,19 +38,15 @@ public sealed class DaytimeLifecycleService(
         using var timeout =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
-        timeout.CancelAfter(
-            TimeSpan.FromSeconds(2)); // TODO: Make configurable
-
-        logger.LogInformation(
-            "HappyDaytime Service Listening on {IPAddress}:{Port}", listenAddress, options.Value.Port);
+        timeout.CancelAfter(TimeSpan.FromSeconds(2)); // TODO: Make configurable
+        logger.LogInformation("HappyDaytime Service Listening on {IPAddress}:{Port}", listenAddress, options.Value.Port);
 
         try
         {
             bool published = await missionControlClient
                 .TryPublishAsync(
                     eventType: DaytimeServiceStartedEvent.EventName,
-                    payload: new DaytimeServiceStartedEvent(
-                            $"{listenAddress}:{options.Value.Port}"),
+                    payload: new DaytimeServiceStartedEvent($"{listenAddress}:{options.Value.Port}"),
                     payloadTypeInfo: HappyDaytimeJsonContext
                         .Default
                         .DaytimeServiceStartedEvent,

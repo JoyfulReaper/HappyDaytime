@@ -147,11 +147,10 @@ public sealed class DaytimeConnectionHandler(
 
     private bool IsIgnoredTelemetrySource(EndPoint? remoteEndPoint)
     {
-        string? remoteAddress =
-            (remoteEndPoint as IPEndPoint)?
-                .Address
-                .MapToIPv4()
-                .ToString();
+        string? remoteAddress = (remoteEndPoint as IPEndPoint)?
+            .Address
+            .MapToIPv4()
+            .ToString();
 
         return !string.IsNullOrWhiteSpace(options.Value.TelemetryIgnoredRemoteAddress) &&
                 string.Equals(remoteAddress, options.Value.TelemetryIgnoredRemoteAddress, StringComparison.OrdinalIgnoreCase);
