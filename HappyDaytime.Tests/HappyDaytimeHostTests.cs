@@ -14,7 +14,7 @@ using Xunit;
 
 namespace HappyDaytime.Tests;
 
-public sealed class WorkerTests
+public sealed class HappyDaytimeHostTests
 {
     [Fact]
     public async Task Start_Publishes_Service_Started_Telemetry()
