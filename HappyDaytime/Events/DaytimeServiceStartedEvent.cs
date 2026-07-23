@@ -6,8 +6,7 @@
 
 namespace HappyDaytime.Events;
 
-public sealed record DaytimeServiceStartedEvent(
-    string ListenAddress)
+public sealed record DaytimeServiceStartedEvent(string ListenAddress)
 {
     public const string EventName = "happydaytime.service.started";
 }
