@@ -427,6 +427,258 @@ public sealed class HappyDaytimeHostTests
         }
     }
 
+    [Fact]
+    public async Task Udp_Ignores_Request_Contents()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            byte[] garbage =
+            [
+                0x00,
+            0xFF,
+            0x13,
+            0x37,
+            0xDE,
+            0xAD,
+            0xBE,
+            0xEF
+            ];
+
+            string response = await SendUdpRequestAsync(
+                IPAddress.Loopback,
+                udpPort,
+                garbage);
+
+            string timestamp =
+                response.TrimEnd('\r', '\n');
+
+            Assert.True(
+                DateTimeOffset.TryParseExact(
+                    timestamp,
+                    "O",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out _));
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
+    public async Task Udp_Responds_Over_IPv6()
+    {
+        if (!Socket.OSSupportsIPv6)
+        {
+            return;
+        }
+
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort =
+            GetFreeUdpPort(IPAddress.IPv6Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "::1";
+            options.UdpPort = udpPort;
+            options.DualMode = false;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string response = await SendUdpRequestAsync(
+                IPAddress.IPv6Loopback,
+                udpPort,
+                [0x01]);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(response));
+
+            await WaitForAsync(() =>
+                client.SuccessfulCalls.Count == 2);
+
+            var request = Assert.Single(
+                client.SuccessfulCalls,
+                call => call.EventType ==
+                    DaytimeRequestCompletedEvent.EventName);
+
+            var payload =
+                Assert.IsType<DaytimeRequestCompletedEvent>(
+                    request.Payload);
+
+            Assert.Equal(
+                DaytimeRequestCompletedEvent.UdpProtocol,
+                payload.Protocol);
+
+            Assert.StartsWith(
+                "[::1]:",
+                payload.Remote,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
+    public async Task Udp_DualMode_Responds_Over_IPv4_And_IPv6()
+    {
+        if (!Socket.OSSupportsIPv6)
+        {
+            return;
+        }
+
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort(IPAddress.IPv6Loopback);
+        int udpPort = GetFreeUdpPort(IPAddress.IPv6Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.ListenAddress = "::";
+            options.DualMode = true;
+
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "::";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string ipv4Response =
+                await SendUdpRequestAsync(
+                    IPAddress.Loopback,
+                    udpPort,
+                    [0x01]);
+
+            string ipv6Response =
+                await SendUdpRequestAsync(
+                    IPAddress.IPv6Loopback,
+                    udpPort,
+                    [0x02]);
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(ipv4Response));
+
+            Assert.False(
+                string.IsNullOrWhiteSpace(ipv6Response));
+
+            await WaitForAsync(() =>
+                client.SuccessfulCalls.Count == 3);
+
+            DaytimeRequestCompletedEvent[] requests =
+                client.SuccessfulCalls
+                    .Where(call =>
+                        call.EventType ==
+                        DaytimeRequestCompletedEvent.EventName)
+                    .Select(call =>
+                        Assert.IsType<
+                            DaytimeRequestCompletedEvent>(
+                                call.Payload))
+                    .ToArray();
+
+            Assert.Equal(2, requests.Length);
+
+            Assert.All(
+                requests,
+                request => Assert.Equal(
+                    DaytimeRequestCompletedEvent.UdpProtocol,
+                    request.Protocol));
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
+    public async Task Udp_Responds_Over_IPv4_And_Publishes_Telemetry()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string response = await SendUdpRequestAsync(
+                IPAddress.Loopback,
+                udpPort,
+                "hello daytime"u8.ToArray());
+
+            Assert.EndsWith("\r\n", response);
+
+            string timestamp = response.TrimEnd('\r', '\n');
+
+            Assert.True(
+                DateTimeOffset.TryParseExact(
+                    timestamp,
+                    "O",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out _));
+
+            await WaitForAsync(() =>
+                client.SuccessfulCalls.Count == 2);
+
+            var request = Assert.Single(
+                client.SuccessfulCalls,
+                call => call.EventType ==
+                    DaytimeRequestCompletedEvent.EventName);
+
+            var payload =
+                Assert.IsType<DaytimeRequestCompletedEvent>(
+                    request.Payload);
+
+            Assert.True(payload.Succeeded);
+            Assert.Equal("success", payload.Outcome);
+            Assert.Equal(
+                DaytimeRequestCompletedEvent.UdpProtocol,
+                payload.Protocol);
+
+            Assert.StartsWith(
+                "127.0.0.1:",
+                payload.Remote,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
     private static int GetFreeTcpPort() =>
         GetFreeTcpPort(IPAddress.Loopback);
 
@@ -473,9 +725,19 @@ public sealed class HappyDaytimeHostTests
             configured.Port = options.Port;
             configured.MaxConcurrentConnections = options.MaxConcurrentConnections;
             configured.RequestTimeoutSeconds = options.RequestTimeoutSeconds;
-            configured.TelemetryIgnoredRemoteAddress = options.TelemetryIgnoredRemoteAddress;
+            configured.TelemetryIgnoredRemoteAddress =
+                options.TelemetryIgnoredRemoteAddress;
+
+            configured.UdpEnabled = options.UdpEnabled;
+            configured.UdpListenAddress = options.UdpListenAddress;
+            configured.UdpPort = options.UdpPort;
         });
-        builder.Services.AddTcpServer<DaytimeConnectionHandler, HappyDaytimeOptions>();
+
+        builder.Services.AddTcpServer<
+            DaytimeConnectionHandler,
+            HappyDaytimeOptions>();
+
+        builder.Services.AddHostedService<UdpDaytimeService>();
         builder.Services.AddHostedService<DaytimeLifecycleService>();
 
         return builder.Build();
@@ -552,6 +814,35 @@ public sealed class HappyDaytimeHostTests
         }
 
         throw new TimeoutException("Timed out while waiting for the host to reach the expected state.");
+    }
+
+    private static int GetFreeUdpPort(IPAddress address)
+    {
+        using var udp = new UdpClient(address.AddressFamily);
+        udp.Client.Bind(new IPEndPoint(address, 0));
+
+        return ((IPEndPoint)udp.Client.LocalEndPoint!).Port;
+    }
+
+    private static async Task<string> SendUdpRequestAsync(
+        IPAddress address,
+        int port,
+        byte[] payload)
+    {
+        using var udp = new UdpClient(address.AddressFamily);
+
+        udp.Connect(address, port);
+
+        await udp.SendAsync(
+            payload,
+            payload.Length)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+
+        UdpReceiveResult received =
+            await udp.ReceiveAsync()
+                .WaitAsync(TimeSpan.FromSeconds(5));
+
+        return Encoding.ASCII.GetString(received.Buffer);
     }
 
     private sealed class RecordingMissionControlClient : IMissionControlClient
