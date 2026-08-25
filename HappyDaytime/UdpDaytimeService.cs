@@ -23,8 +23,8 @@ public sealed class UdpDaytimeService(
     private static readonly TimeSpan TelemetryPublishTimeout = TimeSpan.FromSeconds(2);
     private UdpClient? _udp;
 
-    public override Task StartAsync(
-    CancellationToken cancellationToken)
+    public override async Task StartAsync(
+        CancellationToken cancellationToken)
     {
         HappyDaytimeOptions value = options.Value;
 
@@ -50,7 +50,30 @@ public sealed class UdpDaytimeService(
                 value.DualMode);
         }
 
-        return base.StartAsync(cancellationToken);
+        try
+        {
+            await base.StartAsync(cancellationToken);
+        }
+        catch
+        {
+            _udp?.Dispose();
+            _udp = null;
+            throw;
+        }
+    }
+
+    public override async Task StopAsync(
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await base.StopAsync(cancellationToken);
+        }
+        finally
+        {
+            _udp?.Dispose();
+            _udp = null;
+        }
     }
 
     protected override async Task ExecuteAsync(
@@ -108,8 +131,7 @@ public sealed class UdpDaytimeService(
             udp.Dispose();
             _udp = null;
 
-            logger.LogInformation(
-                "HappyDaytime UDP listener stopped.");
+            logger.LogInformation("HappyDaytime UDP listener stopped.");
         }
     }
 
