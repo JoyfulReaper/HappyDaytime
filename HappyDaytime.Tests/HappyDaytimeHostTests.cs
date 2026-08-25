@@ -366,6 +366,64 @@ public sealed class HappyDaytimeHostTests
         }
     }
 
+    [Fact]
+    public async Task DualMode_Responds_Over_IPv4_And_IPv6()
+    {
+        if (!Socket.OSSupportsIPv6)
+        {
+            return;
+        }
+
+        var client = new RecordingMissionControlClient();
+        int port = GetFreeTcpPort(IPAddress.IPv6Loopback);
+
+        using IHost host = CreateHost(port, client, options =>
+        {
+            options.ListenAddress = "::";
+            options.DualMode = true;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string ipv4Response = await SendRequestAsync(
+                IPAddress.Loopback,
+                port);
+
+            string ipv6Response = await SendRequestAsync(
+                IPAddress.IPv6Loopback,
+                port);
+
+            Assert.False(string.IsNullOrWhiteSpace(ipv4Response));
+            Assert.False(string.IsNullOrWhiteSpace(ipv6Response));
+
+            await WaitForAsync(() =>
+                client.SuccessfulCalls.Count == 3);
+
+            DaytimeRequestCompletedEvent[] requests =
+                client.SuccessfulCalls
+                    .Where(call =>
+                        call.EventType ==
+                        DaytimeRequestCompletedEvent.EventName)
+                    .Select(call =>
+                        Assert.IsType<DaytimeRequestCompletedEvent>(
+                            call.Payload))
+                    .ToArray();
+
+            Assert.Equal(2, requests.Length);
+            Assert.All(requests, request =>
+            {
+                Assert.True(request.Succeeded);
+                Assert.Equal("success", request.Outcome);
+            });
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
     private static int GetFreeTcpPort() =>
         GetFreeTcpPort(IPAddress.Loopback);
 
