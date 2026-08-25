@@ -1,28 +1,32 @@
 # Happy Daytime
 
-Happy Daytime is a lightweight TCP Daytime server built with .NET 10 and
+Happy Daytime is a lightweight RFC 867 Daytime server built with .NET 10 and
 published as a Native AOT executable.
 
-When a client connects, the server writes exactly one UTC timestamp line and
-closes the TCP connection:
+It supports both TCP and UDP over IPv4 and IPv6.
+
+A response contains exactly one UTC timestamp line:
 
 ```text
 2026-07-17T21:30:45.1234567+00:00
 ```
 
-Happy Daytime supports the TCP side of
-[RFC 867](https://www.rfc-editor.org/rfc/rfc867). RFC 867 also defines UDP, but
-Happy Daytime intentionally does not implement UDP.
+Happy Daytime implements the TCP and UDP services described by
+[RFC 867](https://www.rfc-editor.org/rfc/rfc867).
 
 ## Features
 
-- TCP-only RFC 867 daytime responses
-- Configurable listen address, port, timeout, and connection limit
-- One ISO 8601 / round-trip UTC timestamp line per connection
-- Graceful shutdown while active connections finish
-- Best-effort Mission Control startup and request telemetry
+- RFC 867 Daytime over TCP and UDP
+- IPv4 and IPv6 support
+- IPv4/IPv6 dual-stack operation
+- Configurable TCP and UDP listen addresses and ports
+- One ISO 8601 / round-trip UTC timestamp per request
+- TCP request contents are ignored
+- UDP datagram contents are ignored
+- Graceful shutdown
+- Best-effort Mission Control telemetry
 - Native AOT publishing with full trimming and size optimization
-- Self-contained Alpine native executable in a small `runtime-deps` final image
+- Self-contained Alpine native executable
 - Non-root container process
 
 ## Requirements
@@ -35,9 +39,14 @@ Happy Daytime intentionally does not implement UDP.
 ```powershell
 git clone https://github.com/JoyfulReaper/HappyDaytime.git
 cd HappyDaytime
+
 $env:Daytime__Port = "1313"
+$env:Daytime__UdpPort = "1313"
+
 dotnet run --project .\HappyDaytime\HappyDaytime.csproj
 ```
+
+### TCP
 
 Connect with a TCP client:
 
@@ -45,36 +54,79 @@ Connect with a TCP client:
 nc 127.0.0.1 1313
 ```
 
-The client does not need to send data. The server writes one timestamp line and
-closes the connection.
+The client does not need to send any data. Happy Daytime writes one timestamp
+line and closes the connection.
+
+Request data, if sent, is ignored.
+
+### UDP
+
+Send any UDP datagram:
+
+```bash
+echo hello | nc -u -w 1 127.0.0.1 1313
+```
+
+The contents of the datagram are ignored. Happy Daytime replies with one
+timestamp datagram.
+
+### IPv6
+
+TCP:
+
+```bash
+nc -6 ::1 1313
+```
+
+UDP:
+
+```bash
+echo hello | nc -6 -u -w 1 ::1 1313
+```
 
 ## Docker
 
-Build and run on the unprivileged internal container port:
+Build the image:
 
 ```bash
 docker build -t happy-daytime .
-docker run --rm -p 1313:1313 happy-daytime
 ```
 
-Publish the canonical public Daytime port while keeping the container process
+Run TCP and UDP on the unprivileged container port:
+
+```bash
+docker run --rm \
+  -p 1313:1313/tcp \
+  -p 1313:1313/udp \
+  happy-daytime
+```
+
+Publish the canonical RFC 867 Daytime port while keeping the container process
 non-root:
 
 ```bash
-docker run --rm -p 13:1313 happy-daytime
+docker run --rm \
+  -p 13:1313/tcp \
+  -p 13:1313/udp \
+  happy-daytime
 ```
 
 Binding host port 13 may require root or appropriate host-level privileges on
-Linux and macOS. The container process itself still runs as a non-root user and
-does not need added Linux capabilities.
+Linux and macOS. The container process itself remains non-root and does not need
+additional Linux capabilities.
 
 The Docker image defaults to:
 
 ```dockerfile
-ENV Daytime__ListenAddress=0.0.0.0
+ENV Daytime__ListenAddress=::
+ENV Daytime__DualMode=true
 ENV Daytime__Port=1313
+ENV Daytime__UdpEnabled=true
 ENV Daytime__MaxConcurrentConnections=100
 ```
+
+`UdpListenAddress` and `UdpPort` are not overridden in the image, so UDP inherits
+the TCP listen address and port.
 
 The final image uses `mcr.microsoft.com/dotnet/runtime-deps:10.0-alpine`. It
 contains the Native AOT executable and native runtime dependencies only; it does
@@ -83,35 +135,60 @@ not contain the full managed .NET runtime.
 ## Configuration
 
 Settings live in the `Daytime` section of
-[`appsettings.json`](HappyDaytime/appsettings.json). Environment variables use
-two underscores (`__`) as section separators.
+[`appsettings.json`](HappyDaytime/appsettings.json).
+
+Environment variables use two underscores (`__`) as section separators.
 
 | Setting | Environment variable | Default | Description |
-| --- | --- | ---: | --- |
-| `ListenAddress` | `Daytime__ListenAddress` | `0.0.0.0` | IP address on which the TCP listener binds |
+| --- | --- | --- | --- |
+| `ListenAddress` | `Daytime__ListenAddress` | `::` | TCP listen address |
+| `DualMode` | `Daytime__DualMode` | `true` | Enables IPv4/IPv6 dual-stack operation when listening on `::` |
 | `Port` | `Daytime__Port` | `13` | TCP listening port |
-| `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum concurrent accepted connections |
-| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing one response |
+| `UdpEnabled` | `Daytime__UdpEnabled` | `true` | Enables the UDP Daytime listener |
+| `UdpListenAddress` | `Daytime__UdpListenAddress` | `null` | UDP listen address; `null` inherits `ListenAddress` |
+| `UdpPort` | `Daytime__UdpPort` | `null` | UDP port; `null` inherits `Port` |
+| `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum concurrent TCP connections |
+| `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing a TCP response |
 | `TelemetryIgnoredRemoteAddress` | `Daytime__TelemetryIgnoredRemoteAddress` | `null` | Client IP excluded from request telemetry |
 
-Example:
+The default configuration listens on the IPv6 wildcard address (`::`) with
+dual mode enabled, allowing both IPv4 and IPv6 clients on systems that support
+dual-stack sockets.
+
+Example IPv4-only configuration:
 
 ```bash
-Daytime__ListenAddress=127.0.0.1 \
+Daytime__ListenAddress=0.0.0.0 \
+Daytime__DualMode=false \
 Daytime__Port=1313 \
-Daytime__MaxConcurrentConnections=100 \
+Daytime__UdpEnabled=true \
 dotnet run --project HappyDaytime/HappyDaytime.csproj
 ```
 
-Invalid port, connection-limit, or timeout values are rejected when the
-application starts.
+Example with UDP on a different port:
+
+```bash
+Daytime__Port=1313 \
+Daytime__UdpPort=1314 \
+dotnet run --project HappyDaytime/HappyDaytime.csproj
+```
+
+Invalid port, connection-limit, timeout, or incompatible dual-mode values are
+rejected when the application starts.
 
 ## Build And Publish
 
 ```bash
 dotnet restore HappyDaytime.slnx
-dotnet build HappyDaytime.slnx --configuration Release --no-restore
-dotnet test HappyDaytime.slnx --configuration Release --no-build
+
+dotnet build HappyDaytime.slnx \
+  --configuration Release \
+  --no-restore
+
+dotnet test HappyDaytime.slnx \
+  --configuration Release \
+  --no-build
+
 dotnet publish HappyDaytime/HappyDaytime.csproj \
   --configuration Release \
   --runtime linux-musl-x64 \
@@ -129,14 +206,19 @@ Happy Daytime publishes best-effort Mission Control telemetry:
 - `happydaytime.service.started`
 - `happydaytime.request.completed`
 
-Startup telemetry and request telemetry each use an independent two-second
-bounded timeout. If Mission Control is unavailable, returns `false`, times out,
-or throws, the server logs the condition and keeps serving.
+Request telemetry includes a `Protocol` value of either `tcp` or `udp`.
 
-For request telemetry, the response is written and the client connection is
-closed before telemetry publication begins. The connection slot is also
-released first, so slow telemetry does not delay clients or consume the
-configured connection limit.
+Telemetry failures never prevent Happy Daytime from serving protocol requests.
+
+For TCP, request telemetry is registered after the connection closes so slow
+telemetry does not hold the client connection or consume a connection slot.
+
+For UDP, the response is sent before telemetry publication and telemetry is not
+awaited by the datagram receive loop, so slow Mission Control publishing does
+not prevent subsequent datagrams from being served.
+
+Telemetry publication uses a bounded timeout and handles Mission Control
+failures as best-effort observability failures rather than protocol failures.
 
 ## License
 
