@@ -173,7 +173,7 @@ public sealed class UdpDaytimeService(
             return;
         }
 
-        await PublishTelemetryAsync(
+        _ = PublishTelemetryAsync(
             remoteEndPoint.ToString(),
             response,
             stopwatch.ElapsedMilliseconds,

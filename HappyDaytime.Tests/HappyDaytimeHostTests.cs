@@ -665,6 +665,59 @@ public sealed class HappyDaytimeHostTests
     }
 
     [Fact]
+    public async Task Udp_Keeps_Serving_While_Request_Telemetry_Is_Blocked()
+    {
+        var client = new RecordingMissionControlClient
+        {
+            BlockRequestTelemetry = true
+        };
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string firstResponse =
+                await SendUdpRequestAsync(
+                    IPAddress.Loopback,
+                    udpPort,
+                    [0x01]);
+
+            await WaitForAsync(() =>
+                client.BlockedRequestTelemetry.Count == 1);
+
+            string secondResponse =
+                await SendUdpRequestAsync(
+                    IPAddress.Loopback,
+                    udpPort,
+                    [0x02]);
+
+            await WaitForAsync(() =>
+                client.BlockedRequestTelemetry.Count == 2);
+
+            Assert.NotEmpty(firstResponse);
+            Assert.NotEmpty(secondResponse);
+            Assert.Equal(
+                2,
+                client.BlockedRequestTelemetry.Count);
+        }
+        finally
+        {
+            client.ReleaseAllBlockedRequestTelemetry();
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
     public async Task Udp_Stop_Releases_The_Port()
     {
         var client = new RecordingMissionControlClient();
