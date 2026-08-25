@@ -137,15 +137,18 @@ public sealed class HappyDaytimeHostTests
             await host.StartAsync();
             await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
 
-            string response = await SendRequestAsync(port).WaitAsync(TimeSpan.FromSeconds(5));
+            string response = await SendRequestAsync(port)
+                .WaitAsync(TimeSpan.FromSeconds(5));
 
-            await client.RequestTelemetryStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await WaitForAsync(() =>
+                client.BlockedRequestTelemetry.Count == 1);
 
             Assert.NotEmpty(response);
             Assert.Single(client.BlockedRequestTelemetry);
             Assert.DoesNotContain(
                 client.SuccessfulCalls,
-                call => call.EventType == DaytimeRequestCompletedEvent.EventName);
+                call => call.EventType ==
+                    DaytimeRequestCompletedEvent.EventName);
         }
         finally
         {

@@ -10,10 +10,8 @@ using JoyfulReaperLib.MissionControl;
 using JoyfulReaperLib.TcpServer;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 
 namespace HappyDaytime;
 
@@ -60,8 +58,8 @@ public sealed class DaytimeConnectionHandler(
             timeout.CancelAfter(GetRequestTimeout(options.Value));
 
             stopwatch = Stopwatch.StartNew();
-            response = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-            byte[] responseBytes = Encoding.ASCII.GetBytes(response + "\r\n");
+            response = DaytimeResponseFormatter.Format(DateTimeOffset.UtcNow);
+            byte[] responseBytes = DaytimeResponseFormatter.Encode(response);
 
             await context.Stream.WriteAsync(responseBytes, timeout.Token);
 
@@ -194,7 +192,8 @@ public sealed class DaytimeConnectionHandler(
                     Response: result.Response,
                     DurationMilliseconds: result.DurationMilliseconds,
                     Outcome: result.Outcome,
-                    Succeeded: result.Succeeded),
+                    Succeeded: result.Succeeded,
+                    Protocol: DaytimeRequestCompletedEvent.TcpProtocol),
                     payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeRequestCompletedEvent,
                     occurredAt: result.OccurredAt,
                     correlationId: result.CorrelationId,
