@@ -21,6 +21,37 @@ public sealed class UdpDaytimeService(
     : BackgroundService
 {
     private static readonly TimeSpan TelemetryPublishTimeout = TimeSpan.FromSeconds(2);
+    private UdpClient? _udp;
+
+    public override Task StartAsync(
+    CancellationToken cancellationToken)
+    {
+        HappyDaytimeOptions value = options.Value;
+
+        if (value.UdpEnabled)
+        {
+            IPAddress listenAddress =
+                IPAddressUtils.ParseListenAddress(
+                    string.IsNullOrWhiteSpace(
+                        value.UdpListenAddress)
+                        ? value.ListenAddress
+                        : value.UdpListenAddress);
+
+            int port = value.UdpPort ?? value.Port;
+
+            _udp = CreateUdpClient(
+                listenAddress,
+                port,
+                value.DualMode);
+
+            logger.LogInformation(
+                "HappyDaytime UDP listener bound to {Endpoint} (dual mode: {DualMode}).",
+                _udp.Client.LocalEndPoint,
+                value.DualMode);
+        }
+
+        return base.StartAsync(cancellationToken);
+    }
 
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
@@ -34,22 +65,8 @@ public sealed class UdpDaytimeService(
             return;
         }
 
-        IPAddress listenAddress = IPAddressUtils.ParseListenAddress(
-            string.IsNullOrWhiteSpace(value.UdpListenAddress)
-                ? value.ListenAddress
-                : value.UdpListenAddress);
-
-        int port = value.UdpPort ?? value.Port;
-
-        using UdpClient udp = CreateUdpClient(
-            listenAddress,
-            port,
-            value.DualMode);
-
-        logger.LogInformation(
-            "HappyDaytime UDP listener started on {Endpoint} (dual mode: {DualMode}).",
-            udp.Client.LocalEndPoint,
-            value.DualMode);
+        UdpClient udp = _udp
+            ?? throw new InvalidOperationException("UDP Daytime listener was not initialized.");
 
         while (!stoppingToken.IsCancellationRequested)
         {
