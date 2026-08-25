@@ -665,6 +665,38 @@ public sealed class HappyDaytimeHostTests
     }
 
     [Fact]
+    public async Task Udp_Stop_Releases_The_Port()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        await host.StartAsync();
+
+        await StopHostAsync(host);
+
+        using var udp =
+            new UdpClient(AddressFamily.InterNetwork);
+
+        udp.Client.Bind(
+            new IPEndPoint(
+                IPAddress.Loopback,
+                udpPort));
+
+        Assert.Equal(
+            udpPort,
+            ((IPEndPoint)udp.Client.LocalEndPoint!).Port);
+    }
+
+    [Fact]
     public async Task Udp_DualMode_Responds_Over_IPv4_And_IPv6()
     {
         if (!Socket.OSSupportsIPv6)

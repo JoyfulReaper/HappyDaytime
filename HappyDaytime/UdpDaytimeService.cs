@@ -68,41 +68,49 @@ public sealed class UdpDaytimeService(
         UdpClient udp = _udp
             ?? throw new InvalidOperationException("UDP Daytime listener was not initialized.");
 
-        while (!stoppingToken.IsCancellationRequested)
+        try
         {
-            UdpReceiveResult received;
+            while (!stoppingToken.IsCancellationRequested)
+            {
+                UdpReceiveResult received;
 
-            try
-            {
-                received = await udp.ReceiveAsync(stoppingToken);
-            }
-            catch (OperationCanceledException)
-                when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (SocketException exception)
-            {
-                logger.LogWarning(
-                    exception,
-                    "Socket error while receiving UDP Daytime datagram.");
+                try
+                {
+                    received = await udp.ReceiveAsync(stoppingToken);
+                }
+                catch (OperationCanceledException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (SocketException exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Socket error while receiving UDP Daytime datagram.");
 
-                continue;
-            }
-            catch (ObjectDisposedException)
-                when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
+                    continue;
+                }
+                catch (ObjectDisposedException)
+                    when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
 
-            await RespondAsync(
-                udp,
-                received.RemoteEndPoint,
-                stoppingToken);
+                await RespondAsync(
+                    udp,
+                    received.RemoteEndPoint,
+                    stoppingToken);
+            }
         }
+        finally
+        {
+            udp.Dispose();
+            _udp = null;
 
-        logger.LogInformation(
-            "HappyDaytime UDP listener stopped.");
+            logger.LogInformation(
+                "HappyDaytime UDP listener stopped.");
+        }
     }
 
     private async Task RespondAsync(
