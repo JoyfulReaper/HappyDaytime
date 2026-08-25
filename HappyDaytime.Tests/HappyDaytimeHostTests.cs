@@ -4,6 +4,7 @@ using JoyfulReaperLib.TcpServer;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Net;
@@ -64,6 +65,12 @@ public sealed class HappyDaytimeHostTests
             Assert.Equal(2, lines.Length);
             Assert.False(string.IsNullOrWhiteSpace(lines[0]));
             Assert.Empty(lines[1]);
+            Assert.All(
+                lines[0],
+                character => Assert.InRange(
+                    (int)character,
+                    0x20,
+                    0x7E));
 
             Assert.True(
                 DateTimeOffset.TryParseExact(
@@ -87,6 +94,122 @@ public sealed class HappyDaytimeHostTests
             Assert.Matches("^[0-9a-f]{32}$", request.CorrelationId);
             Assert.True(parsedResponse >= request.OccurredAt.AddSeconds(-1));
             Assert.True(parsedResponse <= DateTimeOffset.UtcNow.AddSeconds(1));
+            Assert.Equal(DaytimeRequestCompletedEvent.TcpProtocol, payload.Protocol);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
+    public async Task Tcp_Does_Not_Read_Client_Data()
+    {
+        var client = new RecordingMissionControlClient();
+        var options = Options.Create(
+            new HappyDaytimeOptions
+            {
+                RequestTimeoutSeconds = 2
+            });
+
+        using ILoggerFactory loggerFactory =
+            LoggerFactory.Create(builder => { });
+
+        var handler = new DaytimeConnectionHandler(
+            loggerFactory.CreateLogger<DaytimeConnectionHandler>(),
+            client,
+            options);
+
+        await using var stream = new ThrowOnReadStream();
+
+        var context = new TcpConnectionContext(
+            connectionId: 1,
+            stream: stream,
+            remoteEndPoint:
+                new IPEndPoint(IPAddress.Loopback, 12345),
+            localEndPoint:
+                new IPEndPoint(IPAddress.Loopback, 13),
+            acceptedAt: DateTimeOffset.UtcNow);
+
+        await handler.HandleAsync(
+            context,
+            CancellationToken.None);
+
+        string response =
+            Encoding.ASCII.GetString(stream.ToArray());
+
+        Assert.EndsWith("\r\n", response);
+        Assert.True(stream.Length > 0);
+    }
+
+    [Fact]
+    public async Task Udp_Disabled_Does_Not_Bind_Configured_Port()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = false;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            using var udp = new UdpClient(AddressFamily.InterNetwork);
+            udp.Client.Bind(
+                new IPEndPoint(IPAddress.Loopback, udpPort));
+
+            Assert.Equal(
+                udpPort,
+                ((IPEndPoint)udp.Client.LocalEndPoint!).Port);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
+    public async Task Udp_Responds_To_Empty_Datagram()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string response = await SendUdpRequestAsync(
+                IPAddress.Loopback,
+                udpPort,
+                []);
+
+            Assert.EndsWith("\r\n", response);
+
+            string timestamp = response.TrimEnd('\r', '\n');
+
+            Assert.True(
+                DateTimeOffset.TryParseExact(
+                    timestamp,
+                    "O",
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.RoundtripKind,
+                    out _));
         }
         finally
         {
@@ -845,6 +968,34 @@ public sealed class HappyDaytimeHostTests
         return Encoding.ASCII.GetString(received.Buffer);
     }
 
+    private sealed class ThrowOnReadStream : MemoryStream
+    {
+        public override int Read(
+            byte[] buffer,
+            int offset,
+            int count) =>
+            throw new InvalidOperationException(
+                "Daytime must not read client data.");
+
+        public override int Read(Span<byte> buffer) =>
+            throw new InvalidOperationException(
+                "Daytime must not read client data.");
+
+        public override Task<int> ReadAsync(
+            byte[] buffer,
+            int offset,
+            int count,
+            CancellationToken cancellationToken) =>
+            throw new InvalidOperationException(
+                "Daytime must not read client data.");
+
+        public override ValueTask<int> ReadAsync(
+            Memory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException(
+                "Daytime must not read client data.");
+    }
+
     private sealed class RecordingMissionControlClient : IMissionControlClient
     {
         private int _attemptCounter;
@@ -967,3 +1118,4 @@ public sealed class HappyDaytimeHostTests
         PublishCall Call,
         TaskCompletionSource Release);
 }
+
