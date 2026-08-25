@@ -1,4 +1,12 @@
+/*
+ * Happy Daytime Service
+ * Copyright (c) 2026 Kyle Givler
+ * Licensed under the MIT License.
+ */
+
 using JoyfulReaperLib.TcpServer;
+
+namespace HappyDaytime;
 
 public sealed class HappyDaytimeOptions : ITcpServerOptions
 {
