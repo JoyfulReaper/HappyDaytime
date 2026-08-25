@@ -316,6 +316,74 @@ public sealed class HappyDaytimeHostTests
         listener.Stop();
     }
 
+    [Fact]
+    public async Task Responds_Over_IPv6()
+    {
+        if (!Socket.OSSupportsIPv6)
+        {
+            return;
+        }
+
+        var client = new RecordingMissionControlClient();
+        int port = GetFreeTcpPort(IPAddress.IPv6Loopback);
+
+        using IHost host = CreateHost(port, client, options =>
+        {
+            options.ListenAddress = "::1";
+            options.DualMode = false;
+        });
+
+        try
+        {
+            await host.StartAsync();
+
+            string response = await SendRequestAsync(
+                IPAddress.IPv6Loopback,
+                port);
+
+            Assert.False(string.IsNullOrWhiteSpace(response));
+
+            await WaitForAsync(() =>
+                client.SuccessfulCalls.Count == 2);
+
+            var request = Assert.Single(
+                client.SuccessfulCalls,
+                call => call.EventType ==
+                    DaytimeRequestCompletedEvent.EventName);
+
+            var payload =
+                Assert.IsType<DaytimeRequestCompletedEvent>(
+                    request.Payload);
+
+            Assert.StartsWith(
+                "[::1]:",
+                payload.Remote,
+                StringComparison.Ordinal);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    private static int GetFreeTcpPort() =>
+        GetFreeTcpPort(IPAddress.Loopback);
+
+    private static int GetFreeTcpPort(IPAddress address)
+    {
+        var listener = new TcpListener(address, 0);
+        listener.Start();
+
+        try
+        {
+            return ((IPEndPoint)listener.LocalEndpoint).Port;
+        }
+        finally
+        {
+            listener.Stop();
+        }
+    }
+
     private static IHost CreateHost(
         int port,
         RecordingMissionControlClient client,
@@ -340,6 +408,7 @@ public sealed class HappyDaytimeHostTests
         builder.Services.Configure<HappyDaytimeOptions>(configured =>
         {
             configured.ListenAddress = options.ListenAddress;
+            configured.DualMode = options.DualMode;
             configured.Port = options.Port;
             configured.MaxConcurrentConnections = options.MaxConcurrentConnections;
             configured.RequestTimeoutSeconds = options.RequestTimeoutSeconds;
@@ -351,25 +420,15 @@ public sealed class HappyDaytimeHostTests
         return builder.Build();
     }
 
-    private static int GetFreeTcpPort()
-    {
-        var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
+    private static Task<string> SendRequestAsync(int port) =>
+        SendRequestAsync(IPAddress.Loopback, port);
 
-        try
-        {
-            return ((IPEndPoint)listener.LocalEndpoint).Port;
-        }
-        finally
-        {
-            listener.Stop();
-        }
-    }
-
-    private static async Task<string> SendRequestAsync(int port)
+    private static async Task<string> SendRequestAsync(
+        IPAddress address,
+        int port)
     {
-        using var client = new TcpClient();
-        await ConnectAsync(client, port);
+        using var client = new TcpClient(address.AddressFamily);
+        await ConnectAsync(client, address, port);
 
         await using NetworkStream stream = client.GetStream();
         using var memory = new MemoryStream();
@@ -378,6 +437,7 @@ public sealed class HappyDaytimeHostTests
         while (true)
         {
             int read = await stream.ReadAsync(buffer);
+
             if (read == 0)
             {
                 break;
@@ -391,17 +451,20 @@ public sealed class HappyDaytimeHostTests
 
     private static async Task ConnectAsync(
         TcpClient client,
+        IPAddress address,
         int port)
     {
         var deadline = DateTimeOffset.UtcNow.AddSeconds(5);
+
         while (true)
         {
             try
             {
-                await client.ConnectAsync(IPAddress.Loopback, port);
+                await client.ConnectAsync(address, port);
                 return;
             }
-            catch (SocketException) when (DateTimeOffset.UtcNow < deadline)
+            catch (SocketException)
+                when (DateTimeOffset.UtcNow < deadline)
             {
                 await Task.Delay(25);
             }
