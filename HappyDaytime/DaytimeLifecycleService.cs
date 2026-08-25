@@ -8,6 +8,7 @@ using HappyDaytime.Events;
 using JoyfulReaperLib.JRNet;
 using JoyfulReaperLib.MissionControl;
 using Microsoft.Extensions.Options;
+using System.Net;
 
 namespace HappyDaytime;
 
@@ -33,25 +34,28 @@ public sealed class DaytimeLifecycleService(
         var listenAddress = IPAddressUtils.ParseListenAddress(
             options.Value.ListenAddress);
 
+        var listenEndPoint = new IPEndPoint(
+            listenAddress,
+            options.Value.Port);
+
         DateTimeOffset occurredAt = DateTimeOffset.UtcNow;
 
         using var timeout =
             CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         timeout.CancelAfter(TimeSpan.FromSeconds(2)); // TODO: Make configurable
-        logger.LogInformation("HappyDaytime Service Listening on {IPAddress}:{Port}", listenAddress, options.Value.Port);
+        logger.LogInformation("HappyDaytime Service Listening on {Endpoint}", listenEndPoint);
 
         try
         {
             bool published = await missionControlClient
                 .TryPublishAsync(
                     eventType: DaytimeServiceStartedEvent.EventName,
-                    payload: new DaytimeServiceStartedEvent($"{listenAddress}:{options.Value.Port}"),
+                    payload: new DaytimeServiceStartedEvent(listenEndPoint.ToString()),
                     payloadTypeInfo: HappyDaytimeJsonContext
                         .Default
                         .DaytimeServiceStartedEvent,
-                    occurredAt:
-                        occurredAt,
+                    occurredAt: occurredAt,
                     correlationId: null,
                     cancellationToken: timeout.Token);
 

@@ -29,10 +29,13 @@ COPY --from=build /app/publish .
 
 # Daytime's assigned port is 13, but binding ports below 1024
 # usually requires root or extra Linux capabilities.
-EXPOSE 1313
+EXPOSE 1313/tcp
+EXPOSE 1313/udp
 
-ENV Daytime__ListenAddress=0.0.0.0
+ENV Daytime__ListenAddress=::
+ENV Daytime__DualMode=true
 ENV Daytime__Port=1313
+ENV Daytime__UdpEnabled=true
 ENV Daytime__MaxConcurrentConnections=100
 
 USER $APP_UID

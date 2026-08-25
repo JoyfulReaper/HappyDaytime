@@ -10,10 +10,8 @@ using JoyfulReaperLib.MissionControl;
 using JoyfulReaperLib.TcpServer;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 
 namespace HappyDaytime;
 
@@ -60,8 +58,8 @@ public sealed class DaytimeConnectionHandler(
             timeout.CancelAfter(GetRequestTimeout(options.Value));
 
             stopwatch = Stopwatch.StartNew();
-            response = DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
-            byte[] responseBytes = Encoding.ASCII.GetBytes(response + "\r\n");
+            response = DaytimeResponseFormatter.Format(DateTimeOffset.UtcNow);
+            byte[] responseBytes = DaytimeResponseFormatter.Encode(response);
 
             await context.Stream.WriteAsync(responseBytes, timeout.Token);
 
@@ -144,16 +142,30 @@ public sealed class DaytimeConnectionHandler(
         );
     }
 
-    private bool IsIgnoredTelemetrySource(EndPoint? remoteEndPoint)
-    {
-        string? remoteAddress = (remoteEndPoint as IPEndPoint)?
-            .Address
-            .MapToIPv4()
-            .ToString();
+    private bool IsIgnoredTelemetrySource(EndPoint? remoteEndPoint) =>
+        IsIgnoredTelemetrySource(
+            remoteEndPoint,
+            options.Value.TelemetryIgnoredRemoteAddress);
 
-        return !string.IsNullOrWhiteSpace(options.Value.TelemetryIgnoredRemoteAddress) &&
-                string.Equals(remoteAddress, options.Value.TelemetryIgnoredRemoteAddress, StringComparison.OrdinalIgnoreCase);
+    internal static bool IsIgnoredTelemetrySource(
+        EndPoint? remoteEndPoint,
+        string? ignoredRemoteAddress)
+    {
+        if (remoteEndPoint is not IPEndPoint remote ||
+            string.IsNullOrWhiteSpace(ignoredRemoteAddress) ||
+            !IPAddress.TryParse(ignoredRemoteAddress, out IPAddress? ignoredAddress))
+        {
+            return false;
+        }
+
+        return NormalizeAddress(remote.Address)
+            .Equals(NormalizeAddress(ignoredAddress));
     }
+
+    private static IPAddress NormalizeAddress(IPAddress address) =>
+        address.IsIPv4MappedToIPv6
+            ? address.MapToIPv4()
+            : address;
 
     private async ValueTask PublishTelemetryAsync(
         long connectionId, DaytimeConnectionResult result, CancellationToken cancellationToken)
@@ -180,7 +192,8 @@ public sealed class DaytimeConnectionHandler(
                     Response: result.Response,
                     DurationMilliseconds: result.DurationMilliseconds,
                     Outcome: result.Outcome,
-                    Succeeded: result.Succeeded),
+                    Succeeded: result.Succeeded,
+                    Protocol: DaytimeRequestCompletedEvent.TcpProtocol),
                     payloadTypeInfo: HappyDaytimeJsonContext.Default.DaytimeRequestCompletedEvent,
                     occurredAt: result.OccurredAt,
                     correlationId: result.CorrelationId,

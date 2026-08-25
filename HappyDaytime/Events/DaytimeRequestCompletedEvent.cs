@@ -11,7 +11,11 @@ public sealed record DaytimeRequestCompletedEvent(
     string Response,
     long DurationMilliseconds,
     string Outcome,
-    bool Succeeded)
+    bool Succeeded,
+    string Protocol)
 {
     public const string EventName = "happydaytime.request.completed";
+
+    public const string TcpProtocol = "tcp";
+    public const string UdpProtocol = "udp";
 }

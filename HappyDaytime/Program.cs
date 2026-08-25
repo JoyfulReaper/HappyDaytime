@@ -22,6 +22,8 @@ builder.Services
     .Validate(options => options.Port is > 0 and <= 65535, "Daytime:Port must be between 1 and 65535.")
     .Validate(options => options.MaxConcurrentConnections > 0, "Daytime:MaxConcurrentConnections must be positive.")
     .Validate(options => options.RequestTimeoutSeconds > 0, "Daytime:RequestTimeoutSeconds must be positive.")
+    .Validate(options => !options.UdpEnabled || (options.UdpPort ?? options.Port) is > 0 and <= 65535,
+        "Daytime:UdpPort must be between 1 and 65535 when UDP is enabled.")
     .ValidateOnStart();
 
 builder.Services.AddMissionControlClient(
@@ -29,6 +31,7 @@ builder.Services.AddMissionControlClient(
         MissionControlClientOptions.SectionName));
 
 builder.Services.AddTcpServer<DaytimeConnectionHandler, HappyDaytimeOptions>();
+builder.Services.AddHostedService<UdpDaytimeService>();
 builder.Services.AddHostedService<DaytimeLifecycleService>();
 
 var host = builder.Build();
