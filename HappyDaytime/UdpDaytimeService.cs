@@ -190,7 +190,7 @@ public sealed class UdpDaytimeService(
 
         if (DaytimeConnectionHandler.IsIgnoredTelemetrySource(
                 remoteEndPoint,
-                options.Value.TelemetryIgnoredRemoteAddress))
+                options.Value.TelemetryIgnoredRemoteAddresses))
         {
             return;
         }

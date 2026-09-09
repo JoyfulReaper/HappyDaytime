@@ -145,27 +145,27 @@ public sealed class DaytimeConnectionHandler(
     private bool IsIgnoredTelemetrySource(EndPoint? remoteEndPoint) =>
         IsIgnoredTelemetrySource(
             remoteEndPoint,
-            options.Value.TelemetryIgnoredRemoteAddress);
+            options.Value.TelemetryIgnoredRemoteAddresses);
 
     internal static bool IsIgnoredTelemetrySource(
         EndPoint? remoteEndPoint,
-        string? ignoredRemoteAddress)
+        IEnumerable<string> ignoredRemoteAddresses)
     {
-        if (remoteEndPoint is not IPEndPoint remote ||
-            string.IsNullOrWhiteSpace(ignoredRemoteAddress) ||
-            !IPAddress.TryParse(ignoredRemoteAddress, out IPAddress? ignoredAddress))
+        IPAddress? remoteAddress =
+            (remoteEndPoint as IPEndPoint)?
+                .Address
+                .MapToIPv4();
+
+        if (remoteAddress is null)
         {
             return false;
         }
 
-        return NormalizeAddress(remote.Address)
-            .Equals(NormalizeAddress(ignoredAddress));
+        return ignoredRemoteAddresses.Any(
+            configuredAddress =>
+                IPAddress.TryParse(configuredAddress, out IPAddress? ignoredAddress) &&
+                remoteAddress.Equals(ignoredAddress.MapToIPv4()));
     }
-
-    private static IPAddress NormalizeAddress(IPAddress address) =>
-        address.IsIPv4MappedToIPv6
-            ? address.MapToIPv4()
-            : address;
 
     private async ValueTask PublishTelemetryAsync(
         long connectionId, DaytimeConnectionResult result, CancellationToken cancellationToken)

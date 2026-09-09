@@ -17,7 +17,7 @@ public sealed class HappyDaytimeOptions : ITcpServerOptions
     public int Port { get; set; } = 13;
     public int MaxConcurrentConnections { get; set; } = 64;
     public int RequestTimeoutSeconds { get; set; } = 15;
-    public string? TelemetryIgnoredRemoteAddress { get; set; }
+    public string[] TelemetryIgnoredRemoteAddresses { get; set; } = [];
 
     public bool UdpEnabled { get; set; }
     public string? UdpListenAddress { get; set; }

@@ -149,7 +149,7 @@ Environment variables use two underscores (`__`) as section separators.
 | `UdpPort` | `Daytime__UdpPort` | `null` | UDP port; `null` inherits `Port` |
 | `MaxConcurrentConnections` | `Daytime__MaxConcurrentConnections` | `64` | Maximum concurrent TCP connections |
 | `RequestTimeoutSeconds` | `Daytime__RequestTimeoutSeconds` | `15` | Timeout for writing a TCP response |
-| `TelemetryIgnoredRemoteAddress` | `Daytime__TelemetryIgnoredRemoteAddress` | `null` | Client IP excluded from request telemetry |
+| `TelemetryIgnoredRemoteAddresses` | `Daytime__TelemetryIgnoredRemoteAddresses__0` | `[]` | Client IP addresses excluded from request telemetry |
 
 The default configuration listens on the IPv6 wildcard address (`::`) with
 dual mode enabled, allowing both IPv4 and IPv6 clients on systems that support
@@ -172,6 +172,17 @@ Daytime__Port=1313 \
 Daytime__UdpPort=1314 \
 dotnet run --project HappyDaytime/HappyDaytime.csproj
 ```
+
+Example excluding multiple client addresses from TCP and UDP request telemetry:
+
+```bash
+Daytime__TelemetryIgnoredRemoteAddresses__0=127.0.0.1 \
+Daytime__TelemetryIgnoredRemoteAddresses__1=192.0.2.10 \
+dotnet run --project HappyDaytime/HappyDaytime.csproj
+```
+
+Ignored clients still receive normal Daytime responses; only request telemetry
+is suppressed.
 
 Invalid port, connection-limit, timeout, or incompatible dual-mode values are
 rejected when the application starts.

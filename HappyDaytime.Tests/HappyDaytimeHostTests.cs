@@ -218,13 +218,14 @@ public sealed class HappyDaytimeHostTests
     }
 
     [Fact]
-    public async Task Skips_Request_Telemetry_For_Ignored_Remote_Address()
+    public async Task Tcp_Skips_Request_Telemetry_When_One_Of_Multiple_Addresses_Matches()
     {
         var client = new RecordingMissionControlClient();
         int port = GetFreeTcpPort();
         using IHost host = CreateHost(port, client, options =>
         {
-            options.TelemetryIgnoredRemoteAddress = "127.0.0.1";
+            options.TelemetryIgnoredRemoteAddresses =
+                ["invalid-address", "127.0.0.1"];
         });
 
         try
@@ -235,7 +236,7 @@ public sealed class HappyDaytimeHostTests
             string response = await SendRequestAsync(port);
 
             Assert.NotEmpty(response);
-            await WaitForAsync(() => client.Attempts.Count == 1);
+            await Task.Delay(TimeSpan.FromMilliseconds(250));
             Assert.Single(client.SuccessfulCalls);
             Assert.DoesNotContain(client.SuccessfulCalls, call => call.EventType == DaytimeRequestCompletedEvent.EventName);
         }
@@ -243,6 +244,71 @@ public sealed class HappyDaytimeHostTests
         {
             await StopHostAsync(host);
         }
+    }
+
+    [Fact]
+    public void Empty_Telemetry_Ignore_List_Does_Not_Ignore_Client()
+    {
+        bool ignored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            []);
+
+        Assert.False(ignored);
+    }
+
+    [Fact]
+    public void One_Matching_Telemetry_Address_Ignores_Client()
+    {
+        bool ignored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            ["127.0.0.1"]);
+
+        Assert.True(ignored);
+    }
+
+    [Fact]
+    public void Matching_One_Of_Multiple_Telemetry_Addresses_Ignores_Client()
+    {
+        bool ignored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            ["192.0.2.10", "127.0.0.1", "198.51.100.20"]);
+
+        Assert.True(ignored);
+    }
+
+    [Fact]
+    public void Nonmatching_Telemetry_Addresses_Do_Not_Ignore_Client()
+    {
+        bool ignored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            ["192.0.2.10", "198.51.100.20"]);
+
+        Assert.False(ignored);
+    }
+
+    [Fact]
+    public void Invalid_Telemetry_Address_Does_Not_Throw_Or_Ignore_Client()
+    {
+        bool ignored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            ["invalid-address"]);
+
+        Assert.False(ignored);
+    }
+
+    [Fact]
+    public void IPv4_Mapped_IPv6_And_IPv4_Telemetry_Addresses_Match()
+    {
+        bool mappedRemoteIgnored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Parse("::ffff:127.0.0.1"), 12345),
+            ["127.0.0.1"]);
+
+        bool mappedConfiguredIgnored = DaytimeConnectionHandler.IsIgnoredTelemetrySource(
+            new IPEndPoint(IPAddress.Loopback, 12345),
+            ["::ffff:127.0.0.1"]);
+
+        Assert.True(mappedRemoteIgnored);
+        Assert.True(mappedConfiguredIgnored);
     }
 
     [Fact]
@@ -604,6 +670,46 @@ public sealed class HappyDaytimeHostTests
     }
 
     [Fact]
+    public async Task Udp_Skips_Request_Telemetry_For_Ignored_Remote_Address()
+    {
+        var client = new RecordingMissionControlClient();
+
+        int tcpPort = GetFreeTcpPort();
+        int udpPort = GetFreeUdpPort(IPAddress.Loopback);
+
+        using IHost host = CreateHost(tcpPort, client, options =>
+        {
+            options.UdpEnabled = true;
+            options.UdpListenAddress = "127.0.0.1";
+            options.UdpPort = udpPort;
+            options.TelemetryIgnoredRemoteAddresses = ["127.0.0.1"];
+        });
+
+        try
+        {
+            await host.StartAsync();
+            await WaitForAsync(() => client.SuccessfulCalls.Count == 1);
+
+            string response = await SendUdpRequestAsync(
+                IPAddress.Loopback,
+                udpPort,
+                [0x01]);
+
+            Assert.NotEmpty(response);
+            await Task.Delay(TimeSpan.FromMilliseconds(250));
+            Assert.Single(client.SuccessfulCalls);
+            Assert.DoesNotContain(
+                client.SuccessfulCalls,
+                call => call.EventType ==
+                    DaytimeRequestCompletedEvent.EventName);
+        }
+        finally
+        {
+            await StopHostAsync(host);
+        }
+    }
+
+    [Fact]
     public async Task Udp_Responds_Over_IPv6()
     {
         if (!Socket.OSSupportsIPv6)
@@ -933,8 +1039,8 @@ public sealed class HappyDaytimeHostTests
             configured.Port = options.Port;
             configured.MaxConcurrentConnections = options.MaxConcurrentConnections;
             configured.RequestTimeoutSeconds = options.RequestTimeoutSeconds;
-            configured.TelemetryIgnoredRemoteAddress =
-                options.TelemetryIgnoredRemoteAddress;
+            configured.TelemetryIgnoredRemoteAddresses =
+                options.TelemetryIgnoredRemoteAddresses;
 
             configured.UdpEnabled = options.UdpEnabled;
             configured.UdpListenAddress = options.UdpListenAddress;
